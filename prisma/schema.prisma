@@ -1,0 +1,109 @@
+// =========================================================
+//  Rende+ — Esquema completo da base de dados (Prisma)
+// =========================================================
+//  Cada "model" é uma tabela. Os dados (despesas, rendimentos,
+//  metas, contas, categorias) pertencem todos a um utilizador
+//  (campo userId). Os aforros pertencem a uma meta, que por sua
+//  vez pertence a um utilizador.
+// =========================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---- Utilizadores (contas) ----
+model User {
+  id          String       @id @default(cuid())
+  email       String       @unique
+  password    String       // guardada CIFRADA (hash)
+  nome        String?
+  moeda       String       @default("EUR")
+  poupancaPct Int          @default(20) // 10 a 50
+  orcamento   Float        @default(0)
+  createdAt   DateTime     @default(now())
+  despesas    Despesa[]
+  rendimentos Rendimento[]
+  metas       Meta[]
+  contas      Conta[]
+  categorias  Categoria[]
+}
+
+// ---- Despesas ----
+model Despesa {
+  id        String   @id @default(cuid())
+  nome      String
+  cat       String   @default("outros")
+  valor     Float
+  data      String
+  tipo      String   @default("variavel")
+  origem    String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+}
+
+// ---- Rendimentos ----
+model Rendimento {
+  id        String   @id @default(cuid())
+  fonte     String
+  cat       String   @default("Outros")
+  valor     Float
+  data      String
+  rec       Boolean  @default(false)
+  origem    String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+}
+
+// ---- Metas de poupança ----
+model Meta {
+  id        String   @id @default(cuid())
+  nome      String
+  alvo      Float    @default(0)
+  atual     Float    @default(0)
+  aforros   Aforro[]
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+}
+
+// ---- Aforros (depósitos numa meta) ----
+model Aforro {
+  id        String   @id @default(cuid())
+  valor     Float
+  data      String
+  meta      Meta     @relation(fields: [metaId], references: [id], onDelete: Cascade)
+  metaId    String
+  createdAt DateTime @default(now())
+}
+
+// ---- Contas ligadas ----
+model Conta {
+  id             String   @id @default(cuid())
+  banco          String
+  nome           String
+  saldo          Float    @default(0)
+  moeda          String   @default("EUR")
+  ligadoEm       String?
+  sincronizadoEm String?
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+}
+
+// ---- Categorias personalizadas ----
+model Categoria {
+  id        String   @id @default(cuid())
+  nome      String
+  cor       String?
+  icon      String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+}
