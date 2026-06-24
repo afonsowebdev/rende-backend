@@ -5,15 +5,16 @@
    Funciona com qualquer fornecedor: Brevo, Gmail (palavra-passe
    de app), Mailgun, SendGrid, Resend SMTP, etc.
 
-   Variáveis necessárias no .env:
+   Variáveis necessárias no .env (ou nas Environment do Render):
      SMTP_HOST   ex: smtp-relay.brevo.com
      SMTP_PORT   ex: 587
      SMTP_USER   o utilizador/login do SMTP
      SMTP_PASS   a palavra-passe/chave do SMTP
      MAIL_FROM   ex: "Rende+ <nao-responder@rendemais.pt>"
+                 (TEM de ser um remetente verificado no teu fornecedor)
 
-   Se o SMTP NÃO estiver configurado, em vez de enviar mostramos
-   o código na consola do servidor (útil para testar localmente).
+   Se o SMTP NÃO estiver configurado, mostramos o código na consola
+   do servidor (modo de teste) em vez de enviar.
    ========================================================= */
 
 const nodemailer = require("nodemailer");
@@ -21,17 +22,25 @@ const nodemailer = require("nodemailer");
 let transporter = null;
 let avisou = false;
 
+function smtpConfigurado() {
+  const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
+  return Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
+}
+
 function getTransporter() {
   if (transporter) return transporter;
-  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) return null;
-  const port = Number(SMTP_PORT) || 587;
+  if (!smtpConfigurado()) return null;
+  const port = Number(process.env.SMTP_PORT) || 587;
   transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
+    host: process.env.SMTP_HOST,
     port,
     secure: port === 465, // 465 = SSL; 587 = STARTTLS
-    auth: { user: SMTP_USER, pass: SMTP_PASS },
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
   });
+  // Testa a ligação uma vez e regista o resultado nos logs do servidor.
+  transporter.verify()
+    .then(() => console.log("[mailer] SMTP ligado com sucesso a " + process.env.SMTP_HOST + ":" + port))
+    .catch((e) => console.error("[mailer] FALHA ao ligar ao SMTP (" + process.env.SMTP_HOST + "): " + (e && e.message)));
   return transporter;
 }
 
@@ -71,22 +80,29 @@ async function enviarEmailVerificacao(para, nome, codigo) {
 
   if (!t) {
     if (!avisou) {
-      console.warn("[mailer] SMTP não configurado no .env — os emails NÃO são enviados de verdade.");
-      console.warn("[mailer] Define SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS para ativar o envio real.");
+      console.warn("[mailer] SMTP NÃO configurado — os emails NÃO são enviados.");
+      console.warn("[mailer] Define SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / MAIL_FROM para ativar o envio real.");
       avisou = true;
     }
     console.log(`[mailer] (modo dev) Código de verificação para ${para}: ${codigo}`);
     return { dev: true };
   }
 
-  await t.sendMail({
-    from,
-    to: para,
-    subject: "Confirma o teu email — Rende+",
-    text: `O teu código de verificação Rende+ é ${codigo}. É válido durante 15 minutos.`,
-    html: corpoHtml(nome, codigo),
-  });
-  return { sent: true };
+  try {
+    const info = await t.sendMail({
+      from,
+      to: para,
+      subject: "Confirma o teu email — Rende+",
+      text: `O teu código de verificação Rende+ é ${codigo}. É válido durante 15 minutos.`,
+      html: corpoHtml(nome, codigo),
+    });
+    console.log("[mailer] Email enviado para " + para + " (messageId: " + info.messageId + ")");
+    return { sent: true };
+  } catch (e) {
+    console.error("[mailer] ERRO ao enviar email para " + para + ": " + (e && e.message));
+    // Propaga o erro para a API responder com falha em vez de fingir sucesso.
+    throw new Error("Não foi possível enviar o email de verificação: " + (e && e.message ? e.message : "erro SMTP"));
+  }
 }
 
-module.exports = { enviarEmailVerificacao };
+module.exports = { enviarEmailVerificacao, smtpConfigurado };
