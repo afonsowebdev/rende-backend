@@ -162,4 +162,13 @@ router.patch("/eu", exigirLogin, aw(async (req, res) => {
   res.json(dadosPublicos(user));
 }));
 
+/* ---- ELIMINAR CONTA (protegida) ----
+   Apaga o utilizador. Como todas as relações têm onDelete: Cascade,
+   as despesas, rendimentos, metas, aforros, contas e categorias são
+   apagadas automaticamente. O email fica livre para criar tudo de novo. */
+router.delete("/eu", exigirLogin, aw(async (req, res) => {
+  await prisma.user.delete({ where: { id: req.userId } });
+  res.json({ ok: true, mensagem: "Conta eliminada." });
+}));
+
 module.exports = router;
