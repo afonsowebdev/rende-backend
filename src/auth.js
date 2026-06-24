@@ -10,6 +10,7 @@
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 // O segredo que assina os tokens. Vem do .env (JWT_SECRET).
 const SEGREDO = process.env.JWT_SECRET || "muda-este-segredo-no-.env";
@@ -27,6 +28,52 @@ async function compararPassword(password, hash) {
 // Cria um token que prova quem é o utilizador (válido por 7 dias).
 function criarToken(userId) {
   return jwt.sign({ userId }, SEGREDO, { expiresIn: "7d" });
+}
+
+/* ----- Verificação de email ----- */
+
+// Gera um código aleatório de 6 dígitos (criptograficamente seguro).
+function gerarCodigo() {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+// Token curto que autoriza SÓ definir a password, logo após confirmar o email.
+function criarTokenSetup(userId) {
+  return jwt.sign({ userId, scope: "set-password" }, SEGREDO, { expiresIn: "20m" });
+}
+// Confirma esse token; devolve o userId ou null.
+function verificarTokenSetup(token) {
+  try {
+    const d = jwt.verify(token, SEGREDO);
+    return d.scope === "set-password" ? d.userId : null;
+  } catch {
+    return null;
+  }
+}
+
+/* Regras de força da palavra-passe (validadas no servidor, não dá para contornar).
+   Devolve uma mensagem de erro, ou null se estiver tudo bem. */
+const PW_COMUNS = new Set(["12345678", "123456789", "1234567890", "password", "password1", "qwerty123", "11111111", "00000000", "abc12345", "senha123", "12341234", "aa123456"]);
+function temSequencia(p) {
+  const s = p.toLowerCase();
+  let run = 1;
+  for (let i = 1; i < s.length; i++) {
+    const d = s.charCodeAt(i) - s.charCodeAt(i - 1);
+    if (d === 1 || d === -1) { run++; if (run >= 5) return true; } else run = 1;
+  }
+  return false;
+}
+function validarPassword(p) {
+  if (typeof p !== "string" || p.length < 8) return "A palavra-passe tem de ter pelo menos 8 caracteres.";
+  if (p.length > 72) return "A palavra-passe é demasiado longa.";
+  if (!/[a-z]/.test(p)) return "Inclui pelo menos uma letra minúscula.";
+  if (!/[A-Z]/.test(p)) return "Inclui pelo menos uma letra maiúscula.";
+  if (!/[0-9]/.test(p)) return "Inclui pelo menos um número.";
+  if (!/[^A-Za-z0-9]/.test(p)) return "Inclui pelo menos um símbolo (ex: ! @ # ?).";
+  if (PW_COMUNS.has(p.toLowerCase())) return "Essa palavra-passe é demasiado comum.";
+  if (/^(.)\1+$/.test(p)) return "Não uses o mesmo caractere repetido.";
+  if (temSequencia(p)) return "Evita sequências como 12345 ou abcde.";
+  return null;
 }
 
 /* "Guarda" de rotas protegidas.
@@ -49,4 +96,4 @@ function exigirLogin(req, res, next) {
   }
 }
 
-module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin };
+module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin, gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword };

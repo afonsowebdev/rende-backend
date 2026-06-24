@@ -20,11 +20,14 @@ datasource db {
 model User {
   id          String       @id @default(cuid())
   email       String       @unique
-  password    String       // guardada CIFRADA (hash)
+  password    String?      // guardada CIFRADA (hash) — definida só DEPOIS de confirmar o email
   nome        String?
   moeda       String       @default("EUR")
   poupancaPct Int          @default(20) // 10 a 50
   orcamento   Float        @default(0)
+  emailVerificado Boolean  @default(false) // o email foi confirmado por código?
+  codigoVerif String?      // hash (bcrypt) do código de 6 dígitos enviado por email
+  codigoExpira DateTime?   // até quando o código é válido
   createdAt   DateTime     @default(now())
   despesas    Despesa[]
   rendimentos Rendimento[]
