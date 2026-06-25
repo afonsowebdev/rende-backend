@@ -1,29 +1,44 @@
 /* =========================================================
-   Rende+ — Envio de email (verificação de conta) via RESEND
+   Rende+ — Envio de email (verificação de conta) via Gmail
    =========================================================
-   Em vez de SMTP (que alguns alojamentos, como o Render, podem
-   bloquear), enviamos por HTTP com a API do Resend (porta 443).
-   Só precisas de UMA variável: RESEND_API_KEY.
+   Usa o Gmail SMTP com nodemailer. Simples, rápido e seguro.
 
-   Variáveis no .env (ou nas Environment do Render):
-     RESEND_API_KEY   a chave da API do Resend (começa por "re_")
-     MAIL_FROM        ex: "Rende+ <nao-responder@rendemais.pt>"
-                      O domínio do remetente TEM de estar verificado
-                      no Resend. Para testar sem domínio, podes usar
-                      "Rende+ <onboarding@resend.dev>" (só envia para
-                      o email com que criaste a conta Resend).
+   Variáveis no .env (ou no Render Environment):
+     SMTP_HOST   smtp.gmail.com
+     SMTP_PORT   587
+     SMTP_USER   franciscoafonso014@gmail.com
+     SMTP_PASS   (a "App Password" que geraste no Gmail)
+     MAIL_FROM   Rende+ <franciscoafonso014@gmail.com>
 
-   Se RESEND_API_KEY não estiver definido, mostramos o código na
-   consola do servidor (modo de teste) em vez de enviar.
+   Se não tiver SMTP configurado, mostra o código na consola.
    ========================================================= */
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
+const nodemailer = require("nodemailer");
 
-function emailConfigurado() {
-  return Boolean(process.env.RESEND_API_KEY);
+let transporter = null;
+let avisou = false;
+
+function smtpConfigurado() {
+  const { SMTP_HOST, SMTP_USER, SMTP_PASS } = process.env;
+  return Boolean(SMTP_HOST && SMTP_USER && SMTP_PASS);
 }
 
-// Modelo do email (HTML simples, com a marca Rende+).
+function getTransporter() {
+  if (transporter) return transporter;
+  if (!smtpConfigurado()) return null;
+  const port = Number(process.env.SMTP_PORT) || 587;
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure: port === 465,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+  transporter.verify()
+    .then(() => console.log("[mailer] SMTP ligado com sucesso a " + process.env.SMTP_HOST + ":" + port))
+    .catch((e) => console.error("[mailer] FALHA ao ligar ao SMTP: " + (e && e.message)));
+  return transporter;
+}
+
 function corpoHtml(nome, codigo) {
   const ola = nome ? `Olá, ${nome}` : "Olá";
   return `<!doctype html><html lang="pt"><body style="margin:0;background:#f4f6f5;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#0f1b2d;">
@@ -54,57 +69,33 @@ function corpoHtml(nome, codigo) {
 }
 
 async function enviarEmailVerificacao(para, nome, codigo) {
-  const from = process.env.MAIL_FROM || "Rende+ <onboarding@resend.dev>";
-  const key = process.env.RESEND_API_KEY;
+  const from = process.env.MAIL_FROM || "Rende+ <nao-responder@gmail.com>";
+  const t = getTransporter();
 
-  // Sem chave -> modo de teste: o código aparece nos logs, não há envio.
-  if (!key) {
-    console.warn("[mailer] RESEND_API_KEY não definido — os emails NÃO são enviados.");
+  if (!t) {
+    if (!avisou) {
+      console.warn("[mailer] SMTP NÃO configurado — os emails NÃO são enviados.");
+      console.warn("[mailer] Define SMTP_HOST / SMTP_PORT / SMTP_USER / SMTP_PASS / MAIL_FROM no .env.");
+      avisou = true;
+    }
     console.log(`[mailer] (modo dev) Código de verificação para ${para}: ${codigo}`);
     return { dev: true };
   }
 
-  if (typeof fetch !== "function") {
-    throw new Error("O Node deste servidor não tem fetch global. Usa Node 18+ no Render.");
-  }
-
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000); // não ficar pendurado
   try {
-    const resp = await fetch(RESEND_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Authorization": "Bearer " + key,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from,
-        to: [para],
-        subject: "Confirma o teu email — Rende+",
-        text: `O teu código de verificação Rende+ é ${codigo}. É válido durante 15 minutos.`,
-        html: corpoHtml(nome, codigo),
-      }),
-      signal: ctrl.signal,
+    const info = await t.sendMail({
+      from,
+      to: para,
+      subject: "Confirma o teu email — Rende+",
+      text: `O teu código de verificação Rende+ é ${codigo}. É válido durante 15 minutos.`,
+      html: corpoHtml(nome, codigo),
     });
-
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) {
-      const msg = (data && (data.message || data.name)) || ("HTTP " + resp.status);
-      console.error("[mailer] ERRO Resend (" + resp.status + "): " + msg);
-      throw new Error("Não foi possível enviar o email de verificação: " + msg);
-    }
-    console.log("[mailer] Email enviado para " + para + " (id: " + (data && data.id) + ")");
-    return { sent: true, id: data && data.id };
+    console.log("[mailer] Email enviado para " + para + " (messageId: " + info.messageId + ")");
+    return { sent: true };
   } catch (e) {
-    if (e && e.name === "AbortError") {
-      console.error("[mailer] Tempo esgotado a contactar o Resend.");
-      throw new Error("Tempo esgotado ao enviar o email. Tenta novamente.");
-    }
-    console.error("[mailer] Falha no envio: " + (e && e.message));
-    throw e;
-  } finally {
-    clearTimeout(timer);
+    console.error("[mailer] ERRO ao enviar email para " + para + ": " + (e && e.message));
+    throw new Error("Não foi possível enviar o email de verificação: " + (e && e.message ? e.message : "erro SMTP"));
   }
 }
 
-module.exports = { enviarEmailVerificacao, emailConfigurado, smtpConfigurado: emailConfigurado };
+module.exports = { enviarEmailVerificacao, smtpConfigurado };
