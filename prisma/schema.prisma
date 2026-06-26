@@ -28,6 +28,12 @@ model User {
   emailVerificado Boolean  @default(false) // o email foi confirmado por código?
   codigoVerif String?      // hash (bcrypt) do código de 6 dígitos enviado por email
   codigoExpira DateTime?   // até quando o código é válido
+  // ---- Recuperação de palavra-passe (código enviado por email) ----
+  codigoReset      String?    // hash (bcrypt) do código de recuperação
+  codigoResetExpira DateTime? // até quando o código de recuperação é válido
+  // ---- Data de nascimento (bloqueia 7 dias depois de ser definida) ----
+  dataNascimento      String?   // formato AAAA-MM-DD
+  nascimentoDefinidoEm DateTime? // quando foi definida pela 1.ª vez (conta os 7 dias a partir daqui)
   createdAt   DateTime     @default(now())
   despesas    Despesa[]
   rendimentos Rendimento[]
