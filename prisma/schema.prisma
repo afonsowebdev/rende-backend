@@ -25,6 +25,22 @@ model User {
   moeda       String       @default("EUR")
   poupancaPct Int          @default(20) // 10 a 50
   orcamento   Float        @default(0)
+  // ---- Perfil do onboarding (passo 3) ----
+  //  Estes campos guardam as escolhas que o utilizador faz ao criar a conta.
+  //  São opcionais (?) porque contas antigas não os têm. As listas usam o
+  //  tipo String[] (lista de texto), suportado pelo PostgreSQL.
+  pais            String?    // código do país de residência (ex.: "PT")
+  telefone        String?    // opcional
+  preferencia     String?    // "controlar" | "poupar" | "investir"
+  sobre           String?    // texto livre sobre os objetivos (opcional)
+  situacao        String?    // "estudante" | "trabalhador" | ...
+  objetivo        String?    // "fundo" | "casa" | "viajar" | ...
+  planeamento     String?    // "sim" | "ainda-nao" | "comecar"
+  partilha        String?    // "nao" | "parceiro" | "casa" | "familia"
+  fontesRendimento   String[] @default([]) // ex.: ["Salário", "Bolsa"]
+  principaisDespesas String[] @default([]) // ex.: ["Renda", "Alimentação"]
+  notificacoes    Boolean    @default(true)
+  resumoSemanal   Boolean    @default(true)
   emailVerificado Boolean  @default(false) // o email foi confirmado por código?
   codigoVerif String?      // hash (bcrypt) do código de 6 dígitos enviado por email
   codigoExpira DateTime?   // até quando o código é válido

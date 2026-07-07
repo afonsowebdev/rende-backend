@@ -59,7 +59,35 @@ const dadosPublicos = (user) => ({
   emailVerificado: user.emailVerificado,
   dataNascimento: user.dataNascimento || null,
   nascimentoBloqueado: nascimentoBloqueado(user),
+  // ---- perfil do onboarding (passo 3) ----
+  pais: user.pais || null,
+  telefone: user.telefone || null,
+  preferencia: user.preferencia || null,
+  sobre: user.sobre || null,
+  situacao: user.situacao || null,
+  objetivo: user.objetivo || null,
+  planeamento: user.planeamento || null,
+  partilha: user.partilha || null,
+  fontesRendimento: user.fontesRendimento || [],
+  principaisDespesas: user.principaisDespesas || [],
+  notificacoes: user.notificacoes,
+  resumoSemanal: user.resumoSemanal,
 });
+
+// Recolhe (de forma segura) os campos de perfil do onboarding a partir do corpo do pedido.
+// Só copia os que vierem definidos, para não apagar dados por engano.
+function recolherPerfil(body) {
+  const a = {};
+  const texto = ["pais", "telefone", "preferencia", "sobre", "situacao", "objetivo", "planeamento", "partilha"];
+  for (const k of texto) {
+    if (body[k] !== undefined) a[k] = body[k] === null ? null : String(body[k]).slice(0, 500);
+  }
+  if (Array.isArray(body.fontesRendimento)) a.fontesRendimento = body.fontesRendimento.map(String).slice(0, 30);
+  if (Array.isArray(body.principaisDespesas)) a.principaisDespesas = body.principaisDespesas.map(String).slice(0, 40);
+  if (body.notificacoes !== undefined) a.notificacoes = !!body.notificacoes;
+  if (body.resumoSemanal !== undefined) a.resumoSemanal = !!body.resumoSemanal;
+  return a;
+}
 
 /* ---- 1) REGISTAR: cria (ou reaproveita) a conta por confirmar e envia o código ---- */
 router.post("/registar", aw(async (req, res) => {
@@ -143,6 +171,9 @@ router.post("/definir-password", aw(async (req, res) => {
 
   const dados = { password: await cifrarPassword(password) };
 
+  // Perfil do onboarding (passo 3): guardado logo no registo, se vier no pedido.
+  Object.assign(dados, recolherPerfil(req.body));
+
   // Data de nascimento (opcional aqui, mas é o sítio certo para a guardar no registo).
   if (dataNascimento !== undefined && dataNascimento !== null && dataNascimento !== "") {
     if (!dataNascValida(dataNascimento)) {
@@ -194,6 +225,9 @@ router.patch("/eu", exigirLogin, aw(async (req, res) => {
   if (moeda !== undefined) a.moeda = moeda;
   if (poupancaPct !== undefined) a.poupancaPct = Number(poupancaPct);
   if (orcamento !== undefined) a.orcamento = Number(orcamento);
+
+  // Campos do perfil do onboarding (passo 3): o utilizador pode editá-los nas definições.
+  Object.assign(a, recolherPerfil(req.body));
 
   // Data de nascimento: só se pode mudar nos primeiros 7 dias depois de definida.
   if (dataNascimento !== undefined) {
