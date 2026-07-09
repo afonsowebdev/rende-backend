@@ -27,6 +27,19 @@ const aforrosRouter    = require("./routes/aforros");
 const contasRouter     = require("./routes/contas");
 const categoriasRouter = require("./routes/categorias");
 const authRouter       = require("./routes/auth");
+const pagamentosRouter = require("./routes/pagamentos");
+
+// Recurso Premium criado com a fábrica CRUD (crud.js): as 4 rotas
+// (listar, criar, editar, apagar) são geradas automaticamente.
+const crudRouter = require("./routes/crud");
+const lembretesRouter = crudRouter({
+  modelo: "lembrete",
+  campos: ["titulo", "valor", "data", "repete", "aviso", "cat", "pago"],
+  obrigatorios: ["titulo"],
+  numeros: ["valor", "aviso"],
+  booleanos: ["repete", "pago"],
+  nomeSingular: "Lembrete",
+});
 
 // 3) Definimos a porta. Em produção (no Render) a porta vem do ambiente;
 //    no teu computador, usamos a 3000 por defeito.
@@ -53,6 +66,8 @@ app.get("/", (req, res) => {
       "/api/aforros",
       "/api/contas",
       "/api/categorias",
+      "/api/lembretes",
+      "/api/pagamentos/checkout",
     ],
   });
 });
@@ -71,6 +86,8 @@ app.use("/api/metas", metasRouter);
 app.use("/api/aforros", aforrosRouter);
 app.use("/api/contas", contasRouter);
 app.use("/api/categorias", categoriasRouter);
+app.use("/api/lembretes", lembretesRouter);
+app.use("/api/pagamentos", pagamentosRouter);
 app.use("/api/auth", authRouter);
 
 // 6c) Tratador de erros central: se algo correr mal numa rota,

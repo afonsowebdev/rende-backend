@@ -63,6 +63,22 @@ model User {
   metas       Meta[]
   contas      Conta[]
   categorias  Categoria[]
+  lembretes   Lembrete[]
+}
+
+// ---- Lembretes (Premium): pagamentos a não esquecer ----
+model Lembrete {
+  id        String   @id @default(cuid())
+  titulo    String
+  valor     Float    @default(0)
+  data      String   // data do pagamento, formato AAAA-MM-DD
+  repete    Boolean  @default(false) // repete todos os meses?
+  aviso     Int      @default(3)     // quantos dias antes avisar
+  cat       String?  // categoria (opcional)
+  pago      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // ---- Despesas ----
