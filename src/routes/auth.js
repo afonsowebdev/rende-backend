@@ -72,6 +72,9 @@ const dadosPublicos = (user) => ({
   principaisDespesas: user.principaisDespesas || [],
   notificacoes: user.notificacoes,
   resumoSemanal: user.resumoSemanal,
+  // ---- plano / subscrição ----
+  plano: user.plano || "free",
+  planoExpira: user.planoExpira || null,
 });
 
 // Recolhe (de forma segura) os campos de perfil do onboarding a partir do corpo do pedido.
