@@ -41,6 +41,13 @@ model User {
   principaisDespesas String[] @default([]) // ex.: ["Renda", "Alimentação"]
   notificacoes    Boolean    @default(true)
   resumoSemanal   Boolean    @default(true)
+  // ---- Plano / subscrição ----
+  //  O premium não é outro sistema: é a mesma conta com um "nível".
+  //  "free" por defeito; passa a "premium" quando houver um pagamento ativo.
+  plano            String    @default("free") // "free" | "premium"
+  planoExpira      DateTime?  // até quando o premium é válido (null = sem premium ativo)
+  stripeCustomerId String?   @unique // id do cliente no Stripe (criado no 1.º pagamento)
+  stripeSubId      String?   // id da subscrição ativa no Stripe (para gerir renovações/cancelamentos)
   emailVerificado Boolean  @default(false) // o email foi confirmado por código?
   codigoVerif String?      // hash (bcrypt) do código de 6 dígitos enviado por email
   codigoExpira DateTime?   // até quando o código é válido
