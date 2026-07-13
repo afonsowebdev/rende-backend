@@ -64,6 +64,11 @@ model User {
   contas      Conta[]
   categorias  Categoria[]
   lembretes   Lembrete[]
+  // ---- Assistente Financeiro (IA) ----
+  assistantConversations AssistantConversation[]
+  assistantMessages      AssistantMessage[]
+  assistantUsage         AssistantUsage[]
+  assistantFeedback      AssistantFeedback[]
 }
 
 // ---- Lembretes (Premium): pagamentos a não esquecer ----
@@ -154,4 +159,82 @@ model Categoria {
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId    String
+}
+
+// =========================================================
+//  Assistente Financeiro (IA) — preparação de infraestrutura
+// ---------------------------------------------------------
+//  Estas tabelas ainda não guardam respostas reais de IA:
+//  nenhum fornecedor está ligado nesta fase. Servem só para o
+//  histórico de conversas, o registo de utilização (limites por
+//  plano) e o feedback do utilizador, todos isolados por userId.
+// =========================================================
+
+// ---- Conversas do assistente ----
+model AssistantConversation {
+  id        String             @id @default(cuid())
+  userId    String
+  titulo    String?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mensagens AssistantMessage[]
+
+  @@index([userId])
+}
+
+// ---- Mensagens de cada conversa (utilizador e assistente) ----
+model AssistantMessage {
+  id     String @id @default(cuid())
+  conversationId String
+  userId String
+  role   String // "user" | "assistant" | "system"
+  content String // texto da mensagem (pergunta ou resposta em bruto)
+  // Resposta já validada e estruturada (ver assistant-response.service).
+  // Fica a null enquanto não existir fornecedor de IA ligado.
+  structuredResponse Json?
+  createdAt DateTime @default(now())
+
+  conversation AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedback     AssistantFeedback[]
+
+  @@index([conversationId])
+  @@index([userId])
+}
+
+// ---- Utilização por utilizador e por período (para limites do plano) ----
+model AssistantUsage {
+  id            String    @id @default(cuid())
+  userId        String
+  period        String    // formato "AAAA-MM"
+  requestCount  Int       @default(0)
+  // Colunas preparadas para quando existir fornecedor de IA (ainda não usadas).
+  inputTokens   Int?      @default(0)
+  outputTokens  Int?      @default(0)
+  estimatedCost Float?    @default(0)
+  lastRequestAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period])
+  @@index([userId])
+}
+
+// ---- Feedback do utilizador a uma resposta do assistente ----
+model AssistantFeedback {
+  id        String   @id @default(cuid())
+  messageId String
+  userId    String
+  rating    Int?     // ex.: 1 a 5, ou null se só houver comentário
+  comment   String?
+  createdAt DateTime @default(now())
+
+  message AssistantMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([userId])
 }
