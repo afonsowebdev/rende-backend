@@ -1,9 +1,10 @@
 /* =========================================================
-   Rende+ — Serviço de chat do Assistente (Fase 1, em streaming)
+   Rende+ — Serviço de chat da Rita (streaming)
    ---------------------------------------------------------
    Junta as peças que já tinhas e liga-as ao Claude:
      1) mapeia o histórico do frontend ({role, texto}) para o
-        formato da Anthropic ({role, content});
+        formato da Anthropic ({role, content}), cortado às
+        últimas ~10 trocas (MAX_HISTORICO_MENSAGENS);
      2) confirma o utilizador e o limite do plano (config.js);
      3) gera o contexto financeiro REAL da conta (nunca inventado);
      4) monta o system prompt com esse contexto e pede a resposta
@@ -15,7 +16,9 @@
        código de estado (404/429) ANTES de começarmos a enviar o
        streaming, para o controller poder responder em condições;
      - stream(): a partir daqui já não há códigos de estado — o
-       texto começa a fluir.
+       texto começa a fluir. Qualquer falha aqui é registada só
+       com metadados (nunca o conteúdo da conversa) e mostrada ao
+       utilizador com a voz da Rita.
    ========================================================= */
 
 const prismaPadrao = require("../db");
@@ -32,11 +35,16 @@ function erroComStatus(mensagem, status, extra) {
   return erro;
 }
 
+// Só as últimas ~10 trocas (user+assistant) seguem para o modelo — acima
+// disso, cortamos as mais antigas. Mantém o pedido pequeno e previsível
+// mesmo em conversas longas, sem perder o contexto recente da conversa.
+const MAX_HISTORICO_MENSAGENS = 20;
+
 // Aceita o formato do frontend ({role, texto}) e também {role, content}.
 // Fica só com mensagens de "user"/"assistant" e com texto não vazio.
 function mapearMensagens(mensagens) {
   if (!Array.isArray(mensagens)) return [];
-  return mensagens
+  const mapeadas = mensagens
     .filter((m) => m && (m.role === "user" || m.role === "assistant"))
     .map((m) => ({
       role: m.role,
@@ -45,6 +53,9 @@ function mapearMensagens(mensagens) {
         .trim(),
     }))
     .filter((m) => m.content);
+  return mapeadas.length > MAX_HISTORICO_MENSAGENS
+    ? mapeadas.slice(mapeadas.length - MAX_HISTORICO_MENSAGENS)
+    : mapeadas;
 }
 
 function criarAssistantChatService({
@@ -88,13 +99,32 @@ function criarAssistantChatService({
         "Baseia-te só nestes valores; se faltar informação, di-lo em vez de inventar:\n" +
         JSON.stringify(contexto);
 
-      await provider.streamChat({
-        system,
-        messages: historico,
-        maxTokens: AI_ENV.MAX_TOKENS,
-        timeoutMs: AI_ENV.TIMEOUT_MS,
-        onDelta,
-      });
+      const inicio = Date.now();
+      let pedacos = 0;
+
+      try {
+        await provider.streamChat({
+          system,
+          messages: historico,
+          maxTokens: AI_ENV.MAX_TOKENS,
+          timeoutMs: AI_ENV.TIMEOUT_MS,
+          onDelta: (delta) => { pedacos++; onDelta(delta); },
+        });
+      } catch (erro) {
+        // Só metadados no log — nunca a pergunta do utilizador nem a resposta.
+        console.error("[rita:chat] falha no streaming", {
+          userId, period, tookMs: Date.now() - inicio, pedacos, status: erro.status || 500,
+        });
+        // Erro de configuração (sem chave da IA) é acionável para nós, não para
+        // "tentar outra vez" — mantém a mensagem original. Qualquer falha a meio
+        // do streaming em si mostra-se com a voz da Rita, como pedido.
+        if (erro.code === "AI_PROVIDER_NOT_CONFIGURED") throw erro;
+        const amigavel = new Error("Perdi-me a meio da resposta — tenta outra vez?");
+        amigavel.status = erro.status || 502;
+        throw amigavel;
+      }
+
+      console.log("[rita:chat] resposta concluída", { userId, period, tookMs: Date.now() - inicio, pedacos });
 
       // Só conta como "pergunta usada" quando a resposta correu bem.
       await usageService.registarUso(userId, period);

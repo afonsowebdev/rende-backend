@@ -26,7 +26,10 @@ function limitesDoMes(period) {
   return { startDate: paraISO(inicio), endDate: paraISO(fim) };
 }
 
-// Agrupa despesas por categoria (só totais e percentagens, nunca a lista completa).
+// Agrupa despesas por categoria (só totais e percentagens, nunca a lista completa)
+// e fica só com as 5 categorias com mais peso — chega para a Rita responder a
+// "onde gastei mais", sem inflar o contexto com uma cauda longa de categorias
+// residuais (mantém o resumo perto do limite de ~1500 tokens).
 function agruparPorCategoria(despesas, totalDespesas) {
   const totais = new Map();
   for (const d of despesas) {
@@ -39,7 +42,20 @@ function agruparPorCategoria(despesas, totalDespesas) {
       total: arredondar(total),
       percentage: totalDespesas > 0 ? arredondar((total / totalDespesas) * 100) : 0,
     }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 5);
+}
+
+// Últimas transações do período (despesas + rendimentos juntas, ordenadas por
+// data desc), limitadas a 10 — nunca a lista completa. Se o período tiver mais
+// do que isso, as restantes já ficam representadas de forma agregada em
+// `categories`/`summary`, por isso não é preciso listar tudo.
+function ultimasTransacoes(despesas, rendimentos, limite = 10) {
+  const todas = [
+    ...despesas.map((d) => ({ date: d.data, type: "despesa", label: d.nome, category: d.cat || "outros", amount: arredondar(d.valor) })),
+    ...rendimentos.map((r) => ({ date: r.data, type: "rendimento", label: r.fonte, category: r.cat || "outros", amount: arredondar(r.valor) })),
+  ];
+  return todas.sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, limite);
 }
 
 function criarAssistantContextService(prisma = prismaPadrao) {
@@ -72,9 +88,24 @@ function criarAssistantContextService(prisma = prismaPadrao) {
         summary: { income: totalRendimentos, expenses: totalDespesas, net, savingsRate },
         categories: agruparPorCategoria(despesas, totalDespesas),
         // Não há tabela de orçamentos por categoria — só um orçamento
-        // global opcional no perfil do utilizador (User.orcamento).
-        budgets: user.orcamento > 0 ? [{ total: user.orcamento }] : [],
-        goals: metas.map((m) => ({ id: m.id, name: m.nome, target: m.alvo, current: m.atual })),
+        // global opcional no perfil do utilizador (User.orcamento). "used" é o
+        // total já gasto no período — dá para a Rita dizer se está dentro ou
+        // acima do limite, sem inventar uma divisão por categoria que não existe.
+        budgets: user.orcamento > 0 ? [{
+          total: user.orcamento,
+          used: totalDespesas,
+          remaining: arredondar(user.orcamento - totalDespesas),
+          percentageUsed: arredondar((totalDespesas / user.orcamento) * 100),
+        }] : [],
+        // Sem "prazo"/data-alvo no schema (Meta só tem nome/alvo/atual) — não se
+        // inventa uma data; a Rita só tem o progresso real para trabalhar.
+        goals: metas.map((m) => ({
+          id: m.id,
+          name: m.nome,
+          target: m.alvo,
+          current: m.atual,
+          progressPct: m.alvo > 0 ? arredondar((m.atual / m.alvo) * 100) : null,
+        })),
         accounts: contas.map((c) => ({ id: c.id, name: c.nome, bank: c.banco, balance: c.saldo, currency: c.moeda })),
         upcomingPayments: lembretes.map((l) => ({
           id: l.id, title: l.titulo, amount: l.valor, date: l.data, recurring: l.repete,
@@ -82,6 +113,7 @@ function criarAssistantContextService(prisma = prismaPadrao) {
         recurringTransactions: rendimentos
           .filter((r) => r.rec)
           .map((r) => ({ id: r.id, source: r.fonte, amount: r.valor })),
+        recentTransactions: ultimasTransacoes(despesas, rendimentos, 10),
       };
     },
   };

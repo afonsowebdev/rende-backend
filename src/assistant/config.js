@@ -23,14 +23,14 @@ const MENSAGEM = {
 // (ex.: duplo clique), independente do limite mensal por plano.
 const RATE_LIMIT_MIN_INTERVALO_MS = 3000;
 
-// Variáveis de ambiente do futuro fornecedor de IA. Nesta fase nenhuma
-// chave real deve existir — servem só para a app já saber o nome delas.
+// Variáveis de ambiente do fornecedor de IA (Anthropic — ver providers/anthropic.provider.js).
+// A chave real só existe aqui (.env do servidor); nunca é exposta ao frontend.
 const AI_ENV = {
   PROVIDER: process.env.AI_PROVIDER || null,
   API_KEY: process.env.AI_API_KEY || null,
   MODEL: process.env.AI_MODEL || null,
   TIMEOUT_MS: Number(process.env.AI_TIMEOUT_MS) || 30000,
-  MAX_TOKENS: Number(process.env.AI_MAX_TOKENS) || 800,
+  MAX_TOKENS: Number(process.env.AI_MAX_TOKENS) || 1024,
 };
 
 function limiteMensalDoPlano(plano) {

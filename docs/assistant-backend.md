@@ -1,75 +1,72 @@
-# Assistente Financeiro (IA) — infraestrutura do backend
+# Rita — Assistente IA do Rende+ (infraestrutura do backend)
 
-> **Estado atual: infraestrutura preparada, sem fornecedor de IA ligado.**
-> Esta fase não liga a OpenAI, Anthropic, Google nem nenhum outro fornecedor.
-> A rota `/api/assistant/chat` já funciona de ponta a ponta (autenticação,
-> plano, limites, contexto financeiro, histórico), mas devolve uma resposta
-> técnica em vez de uma resposta gerada por IA.
+> **Estado atual: ligado e a funcionar.** A rota `POST /api/assistant/chat`
+> autentica o pedido, aplica os limites de plano, gera o contexto financeiro
+> real da conta e transmite a resposta da Rita (Claude, via Anthropic) em
+> streaming (SSE) para o frontend.
+>
+> Este documento descreve o caminho **realmente ativo** (`assistant.chat.*` +
+> `providers/anthropic.provider.js`). Existe também um segundo conjunto de
+> ficheiros mais antigo (`assistant.controller.js`, `assistant.service.js`,
+> `assistant.schemas.js`, `assistant-response.service.js`,
+> `prompts/prompt-builder.js`, `actions/*`) de um desenho anterior, não
+> streaming, baseado em respostas JSON estruturadas — não está registado em
+> `assistant.routes.js` e não corre em produção. Fica documentado à parte na
+> secção 9, para não ser confundido com o fluxo ativo nem apagado sem
+> intenção.
 
 ## 1. Arquitetura
 
 O backend do Rende+ é um servidor **Node.js + Express** simples (CommonJS,
 sem TypeScript), com **Prisma** sobre PostgreSQL (Neon) e autenticação por
-**JWT** (sem sessões/cookies). Não existe uma camada formal de "controllers
-vs. services" no resto do projeto — as rotas em `src/routes/*.js` falam
-diretamente com o Prisma. O módulo do assistente introduz uma separação um
-pouco mais fina *só onde isso importa* (contexto financeiro, limites de
-utilização, fornecedor de IA, prompts, ações), porque essas são
-responsabilidades novas e é aí que a futura integração vai mexer.
+**JWT** (sem sessões/cookies).
 
 ```
 src/assistant/
-├── assistant.routes.js              # POST /chat (Express Router)
-├── assistant.controller.js          # req/res only, chama o service
-├── assistant.service.js             # orquestra o fluxo (o único ficheiro
-│                                     # que vai mudar quando ligarmos IA real)
-├── assistant.schemas.js             # validação do corpo do pedido
-├── assistant.types.js                # JSDoc typedefs + constantes partilhadas
-├── assistant.repository.js          # acesso a conversas/mensagens/feedback
-├── assistant-context.service.js     # resumo financeiro do utilizador
+├── assistant.routes.js              # POST /chat (Express Router) — único caminho registado
+├── assistant.chat.controller.js     # req/res do streaming SSE
+├── assistant.chat.service.js        # orquestra: histórico, limites, contexto, streaming, uso
+├── assistant-context.service.js     # resumo financeiro do utilizador (injetado no system prompt)
 ├── assistant-usage.service.js       # contagem e limites por plano
-├── assistant-response.service.js    # valida a resposta (futura) do fornecedor
-├── assistant-provider.interface.js  # contrato do fornecedor de IA + stub
 ├── assistant-rate-limit.middleware.js
+├── providers/
+│   └── anthropic.provider.js        # streaming real com o Claude (fetch nativo, SSE)
 ├── config.js                        # limites, tamanhos, nomes de env vars
-├── prompts/
-│   ├── system-prompt.js
-│   └── prompt-builder.js
-└── actions/
-    ├── action-types.js
-    └── action-validator.js
+└── prompts/
+    └── system-prompt.js             # persona e regras da Rita
+
+# Desenho anterior, não streaming — não está ligado a nenhuma rota (ver nota acima):
+├── assistant.controller.js, assistant.service.js, assistant.schemas.js,
+│   assistant.repository.js, assistant.types.js, assistant-response.service.js,
+│   prompts/prompt-builder.js, actions/action-types.js, actions/action-validator.js
 ```
 
 Todos os serviços que tocam a base de dados são **fábricas** que aceitam o
-cliente Prisma por parâmetro (`function criarX(prisma = require("../db"))`),
-para poderem ser testados com um Prisma falso sem tocar na base de dados
-real. É o único desvio ao padrão do resto do projeto (que faz sempre
-`require("../db")` diretamente) e existe só para permitir os testes do
-ponto 8.
+cliente Prisma (ou outras dependências) por parâmetro
+(`function criarX(prisma = require("../db"))`), para poderem ser testados com
+falsos sem tocar na base de dados real.
 
-## 2. Fluxo de uma mensagem
+## 2. Fluxo de uma mensagem (streaming)
 
 ```
-Frontend
+Frontend (assets/js/api.js → API.assistenteChat)
   → POST /api/assistant/chat  (Authorization: Bearer <token>)
   → exigirLogin                       (src/auth.js — igual ao resto da app)
-  → limitarRajadas                    (assistant-rate-limit.middleware.js)
-  → validarPedidoChat                 (assistant.schemas.js)
-  → assistant.service.processarChat:
-      1. carrega o utilizador autenticado (nunca um userId do body)
-      2. confirma que o conversationId (se vier) é do próprio utilizador
-      3. verifica o limite do plano (assistant-usage.service.js)
-      4. valida o período pedido (não pode ser um mês futuro)
-      5. gera o contexto financeiro (assistant-context.service.js)
-      6. regista a utilização (assistant-usage.service.js)
-      7. [FUTURO] constrói o prompt, chama o fornecedor de IA, valida a resposta
-      8. devolve a resposta ao frontend
+  → limitarRajadas                    (assistant-rate-limit.middleware.js — ~20/min)
+  → assistant.chat.controller.postChatStream:
+      1. chatService.prepararChat({ userId, mensagens }):
+         - mapeia e corta o histórico às últimas ~10 trocas (20 mensagens)
+         - carrega o utilizador autenticado (nunca um userId do body)
+         - verifica o limite do plano (assistant-usage.service.js)
+         - gera o contexto financeiro (assistant-context.service.js)
+      2. abre a resposta SSE (Content-Type: text/event-stream)
+      3. chatService.stream(...): monta o system prompt da Rita + contexto,
+         pede a resposta ao provider Anthropic aos pedaços (onDelta),
+         escreve cada pedaço como `data: {"delta": "..."}\n\n`
+      4. em erro a meio do streaming: `data: {"error": "..."}\n\n` com a voz
+         da Rita ("Perdi-me a meio da resposta — tenta outra vez?")
+      5. no fim: `data: {"done": true}\n\n` e regista o uso do plano
 ```
-
-O ponto 7 está desenhado (prompt-builder, provider interface, response
-service já existem e têm testes), mas **não é chamado ainda** — não faz
-sentido montar um prompt ou chamar um "provider" que só lança erro. Quando
-houver fornecedor, a mudança fica confinada a `assistant.service.js`.
 
 ## 3. Contrato do endpoint atual
 
@@ -80,185 +77,165 @@ Exige `Authorization: Bearer <token>` (o mesmo JWT usado no resto da API).
 **Body:**
 
 ```json
-{
-  "message": "Como estão as minhas finanças este mês?",
-  "period": "2026-07",
-  "conversationId": "opcional"
-}
+{ "mensagens": [{ "role": "user", "texto": "Como estão as minhas finanças este mês?" }] }
 ```
 
-- `message` — obrigatório, 3 a 1500 caracteres (espaços à volta são removidos).
-- `period` — opcional, formato `AAAA-MM`; por omissão usa o mês atual. Não
-  pode ser um mês ainda por decorrer.
-- `conversationId` — opcional; se indicado, tem de pertencer ao utilizador
-  autenticado (senão devolve 404).
-- Qualquer outro campo (incluindo `userId`) é **rejeitado** com 400 — o
-  utilizador é sempre identificado pela sessão, nunca pelo corpo do pedido.
+- `mensagens` — obrigatório, array não vazio; a última tem de ser `role: "user"`.
+  Aceita `{role, texto}` (formato do frontend) ou `{role, content}`.
+- Não há `userId` nem `period` no corpo — o utilizador vem sempre da sessão;
+  o período usado no contexto é sempre o mês atual.
 
-**Resposta 200 (esta fase):**
+**Resposta:** `Content-Type: text/event-stream`, uma linha `data: {...}\n\n`
+por evento:
 
-```json
-{
-  "status": "ready",
-  "message": "A infraestrutura do Assistente Rende+ está preparada para integração.",
-  "contextSummary": {
-    "period": "2026-07",
-    "currency": "EUR",
-    "hasIncomeData": true,
-    "hasExpenseData": true,
-    "hasGoals": false
-  },
-  "usage": { "used": 1, "limit": 5, "remaining": 4 }
-}
-```
+| Evento | Formato | Significado |
+|---|---|---|
+| Pedaço de texto | `{"delta": "..."}` | Acrescentar ao texto já mostrado |
+| Fim | `{"done": true}` | A resposta terminou |
+| Erro | `{"error": "..."}` | Falhou a meio; mensagem já pronta para mostrar ao utilizador |
 
-Note-se que **o contexto financeiro completo nunca é devolvido** — só estas
-flags/totais não sensíveis.
+**Erros antes de abrir o streaming** (JSON normal, com código de estado):
+`400` (mensagens inválidas), `401` (sem sessão), `404` (utilizador não
+encontrado), `429` (limite de plano atingido ou rajada — `limitarRajadas`
+devolve 429 independentemente do limite mensal).
 
-**Erros possíveis:** `400` (validação, período futuro), `401` (sem sessão),
-`404` (utilizador ou conversa não encontrados), `429` (limite de utilização
-atingido ou pedidos a rajada).
+## 4. A Rita — persona e system prompt
 
-## 4. Contexto financeiro
+`prompts/system-prompt.js` centraliza a personalidade e as regras num único
+`SYSTEM_PROMPT` (fácil de iterar sem tocar no resto do módulo):
+
+- Fala sempre em português de Portugal, calorosa, direta e rigorosa com números.
+- Baseia-se exclusivamente no contexto financeiro injetado — nunca inventa
+  valores; admite quando não tem um dado.
+- Formato europeu para dinheiro (`€ 1.234,56`) e percentagens (`12,5%`).
+- Sem markdown decorativo (emojis, `**negrito**`, `#títulos`, tabelas,
+  linhas horizontais) — só texto corrido e listas com hífen.
+- Não dá conselhos de investimento específicos; remete para um profissional.
+- Nunca pede nem repete dados sensíveis.
+
+Em `assistant.chat.service.js`, o contexto financeiro (JSON) é anexado ao
+fim do `SYSTEM_PROMPT` antes de cada pedido — nunca enviado como mensagem
+separada, para não contar para o limite de "últimas ~10 trocas" do histórico
+da conversa.
+
+## 5. Contexto financeiro
 
 `assistant-context.service.js` consulta **apenas** os dados do utilizador
-autenticado (despesas e rendimentos do mês pedido, metas, contas e
-lembretes por pagar) e devolve um resumo — nunca a lista completa de
-transações. Regras seguidas:
+autenticado do mês pedido (despesas, rendimentos, metas, contas, lembretes
+por pagar) e devolve um resumo pensado para caber perto de ~1500 tokens:
+
+- `summary` — receitas, despesas, saldo (`net`) e taxa de poupança do mês.
+- `categories` — só as **5** categorias de despesa com mais peso (nome,
+  total, percentagem) — nunca a lista inteira.
+- `budgets` — orçamento global (`User.orcamento`, não há por categoria),
+  com `used`, `remaining` e `percentageUsed` face ao gasto real do mês.
+- `goals` — nome, valor atual, valor alvo e `progressPct`. **Sem prazo**: o
+  modelo de dados (`Meta`) não tem uma data-alvo, por isso não se inventa
+  uma — a Rita diz que não tem essa informação, se lhe perguntarem.
+- `accounts`, `upcomingPayments`, `recurringTransactions` — como antes.
+- `recentTransactions` — últimas **10** transações (despesas + rendimentos
+  juntas), mais recente primeiro; períodos com mais do que isso já ficam
+  representados de forma agregada em `categories`/`summary`.
+
+Regras mantidas:
 
 - Sem dados → `0`, `[]` ou omitido; nunca um valor inventado.
 - Nunca inclui password, tokens, códigos de verificação, ids do Stripe ou
   qualquer outro campo técnico/sensível do utilizador.
 - Usa sempre a moeda principal do utilizador (`User.moeda`); não converte.
-- **Orçamentos**: o schema atual só tem um orçamento global opcional
-  (`User.orcamento`), não orçamentos por categoria — é isso que aparece em
-  `budgets`.
-- **Partilha**: não existe ainda um modelo de dados de grupos partilhados
-  (só a preferência `User.partilha`, do onboarding). Por isso não há dados
-  agregados de partilha para incluir — nada foi inventado para preencher
-  essa lacuna.
-
-## 5. Modelo de dados (Prisma)
-
-Adicionadas 4 tabelas (migração
-`prisma/migrations/20260713100000_assistente_infraestrutura`), todas
-isoladas por `userId` e com `onDelete: Cascade` a partir de `User`:
-
-| Tabela                   | Para quê                                              |
-|--------------------------|--------------------------------------------------------|
-| `AssistantConversation`  | Agrupa mensagens de uma conversa                        |
-| `AssistantMessage`       | Cada mensagem (papel, conteúdo, resposta estruturada)   |
-| `AssistantUsage`         | Contagem de pedidos por utilizador/período (`@@unique([userId, period])`) |
-| `AssistantFeedback`      | Avaliação do utilizador a uma resposta                  |
-
-Nesta fase só `AssistantUsage` é escrita ativamente (a cada pedido). As
-outras três já têm o repositório pronto (`assistant.repository.js`), mas só
-`obterConversa` é chamado (para validar a posse do `conversationId`) — a
-escrita de histórico fica para quando houver respostas reais para guardar.
-
-**Não fiz a migração na base de dados real.** O schema e o ficheiro SQL da
-migração estão prontos; corre:
-
-```bash
-npx prisma migrate dev
-```
-
-para a aplicar ao Neon configurado no teu `.env` (ou `npx prisma migrate deploy`
-em produção).
+- Não existe ainda um modelo de dados de "Partilha" (grupos partilhados) —
+  não há dados agregados de grupo para incluir; nada é inventado.
 
 ## 6. Segurança e limites
 
-- **Autenticação**: obrigatória (`exigirLogin`, igual ao resto da API).
-- **Autorização por utilizador**: todas as queries filtram por `userId`;
-  `conversationId` de outro utilizador dá 404, não 403 (não confirma que a
-  conversa existe).
+- **Autenticação**: obrigatória (`exigirLogin`, igual ao resto da API); o
+  `userId` usado no contexto e no streaming vem sempre de `req.userId`
+  (token), nunca do corpo do pedido.
+- **Chave da IA**: `AI_API_KEY` só existe no `.env` do servidor (e nas env
+  vars do Render) — nunca chega ao frontend nem é escrita em código.
 - **Limites por plano** (`config.js`, `assistant-usage.service.js`):
-  Free = 5 perguntas/mês, Premium = 100 perguntas/mês. Centralizados num único
-  ficheiro (`LIMITES_POR_PLANO`).
-- **Rate limiting de rajada**: `assistant-rate-limit.middleware.js` — no
-  mínimo 3 segundos entre pedidos do mesmo utilizador (em memória; se um dia
-  houver várias instâncias do servidor, mover para Redis).
-- **Tamanho do body**: `express.json()` já limita a 100kb (default,
-  igual ao resto da API); a mensagem em si está limitada a 1500 caracteres.
-- **Sanitização/validação**: `assistant.schemas.js` rejeita campos
-  desconhecidos, valores fora do formato e nunca lê `userId` do corpo.
+  Free = 5 perguntas/mês, Premium = 100 perguntas/mês.
+- **Rate limiting de rajada**: `assistant-rate-limit.middleware.js` — mínimo
+  3 segundos entre pedidos do mesmo utilizador (em memória), o que já limita
+  a ~20 pedidos/minuto na prática. Se um dia houver várias instâncias do
+  servidor, mover para Redis.
+- **Histórico**: só as últimas ~10 trocas (20 mensagens) seguem para o
+  modelo — acima disso, as mais antigas são cortadas (`MAX_HISTORICO_MENSAGENS`
+  em `assistant.chat.service.js`).
+- **max_tokens**: 1024 por omissão (`AI_ENV.MAX_TOKENS`, ajustável via
+  `AI_MAX_TOKENS` no `.env`).
+- **Logs**: só metadados (`userId`, período, duração, nº de pedaços
+  recebidos, estado do erro) — nunca a pergunta do utilizador nem o texto da
+  resposta da Rita (ver `console.log`/`console.error` em
+  `assistant.chat.service.js`, prefixados com `[rita:chat]`).
 - **Erros em produção**: erros de negócio (400/404/429) respondem com uma
   mensagem curta; qualquer erro inesperado cai no tratador central de
-  `server.js`, que nunca expõe stack traces ao cliente.
-- **Nunca guardados/logados**: passwords, tokens, chaves de API, o contexto
-  financeiro completo, ou qualquer dado bancário sensível desnecessário.
+  `server.js`, que nunca expõe stack traces ao cliente. Falhas a meio do
+  streaming chegam ao utilizador com a voz da Rita ("Perdi-me a meio da
+  resposta — tenta outra vez?"), exceto quando a IA não está configurada
+  (mensagem específica e acionável para a equipa).
 
-### Variáveis de ambiente (futuro fornecedor)
-
-Adicionadas ao `.env.example` (sem valores reais):
+### Variáveis de ambiente
 
 ```
-AI_PROVIDER=
-AI_API_KEY=
-AI_MODEL=
-AI_TIMEOUT_MS=
-AI_MAX_TOKENS=
+AI_PROVIDER="anthropic"
+AI_API_KEY=            # só no .env real / env vars do servidor, nunca aqui
+AI_MODEL="claude-haiku-4-5"   # alias oficial; resolve para claude-haiku-4-5-20251001
+AI_TIMEOUT_MS="30000"
+AI_MAX_TOKENS="1024"
 ```
 
-A chave (`AI_API_KEY`) só existirá no backend (variável de ambiente do
-Render), nunca no frontend nem no repositório.
-
-## 7. Como ligar um fornecedor de IA no futuro
-
-1. Criar `src/assistant/providers/<nome>.provider.js` que exporte um objeto
-   com `generateResponse(input)`, cumprindo o contrato de
-   `assistant-provider.interface.js`.
-2. Em `assistant.service.js`, substituir `providerNaoConfigurado` (hoje nem
-   é importado, porque não é chamado) pela nova implementação, e adicionar
-   entre os passos 5 e 6 do fluxo:
-   - `const prompt = construirPrompt({ mensagem: message, contexto })`
-   - `const bruto = await provider.generateResponse({ ...prompt, maxTokens, timeoutMs })`
-   - `const validado = validarRespostaEstruturada(bruto.raw)`
-3. Guardar a mensagem do utilizador e a resposta validada com
-   `assistant.repository.js` (`guardarMensagem`).
-4. Instalar o SDK do fornecedor escolhido (não instalado nesta fase).
-
-Nenhuma outra parte do módulo (rotas, controller, schemas, limites,
-contexto) precisa de mudar.
-
-## 8. Como testar
+## 7. Como testar
 
 ```bash
 npm test
 ```
 
-Corre com `node --test` (nenhuma dependência nova instalada — o projeto
-ainda não tinha testes nem um test runner). Os testes usam **Prisma falso**
-(objetos simples em memória) e nunca tocam a base de dados real nem chamam
-nenhuma API externa. Cobrem: validação do pedido (incluindo tentativa de
-enviar `userId`), limites por plano (Free/Premium, sem duplicar registos),
-geração do contexto (isolamento por utilizador/período, ausência de dados
-sensíveis, moeda correta, zeros em vez de valores inventados), validação de
-ações e da resposta estruturada, orquestração do serviço (404/429/400) e a
-exigência de autenticação ao nível HTTP real.
+Corre com `node --test`. Os testes usam **dependências falsas** (Prisma,
+usage service, context service, provider) e nunca tocam a base de dados real
+nem chamam a API da Anthropic. Cobrem, entre outros: validação/corte do
+histórico, limites por plano, geração do contexto (isolamento por
+utilizador/período, top-5 categorias, orçamento usado, últimas transações,
+ausência de dados sensíveis, zeros em vez de valores inventados), a
+mensagem amigável da Rita quando o streaming falha a meio, e a exigência de
+autenticação ao nível HTTP real.
 
-## 9. Endpoints
+## 8. Modelo de dados (Prisma)
 
-**Ativo nesta fase:**
-- `POST /api/assistant/chat`
+4 tabelas (migração `prisma/migrations/20260713100000_assistente_infraestrutura`),
+isoladas por `userId` e com `onDelete: Cascade` a partir de `User`:
+`AssistantConversation`, `AssistantMessage`, `AssistantUsage`,
+`AssistantFeedback`. Nesta fase só `AssistantUsage` é escrita ativamente (a
+cada pedido) — as outras existem no schema para o roadmap de histórico de
+conversas (secção 9), ainda não implementado.
 
-**Roadmap (não implementados ainda, arquitetura já preparada):**
+## 9. Desenho anterior (não ativo) e roadmap
+
+O conjunto `assistant.controller.js` / `assistant.service.js` /
+`assistant.schemas.js` / `assistant-response.service.js` /
+`prompts/prompt-builder.js` / `actions/*` implementa um fluxo alternativo,
+não streaming, que devolvia uma resposta JSON estruturada
+(`{summary, metrics, observation, recommendedAction}`) em vez de texto livre
+em streaming. Tem testes próprios e continua a passar, mas **não está
+registado em nenhuma rota** — foi substituído pelo fluxo streaming
+(`assistant.chat.*`) antes de ligar a um fornecedor real. Mantém-se no
+repositório por agora; considerar remover ou revisitar quando/se fizer
+sentido um histórico de conversas com respostas estruturadas por secções.
+
+**Roadmap (não implementado ainda):**
 - `GET    /api/assistant/conversations`
 - `GET    /api/assistant/conversations/:id`
 - `DELETE /api/assistant/conversations/:id`
 - `POST   /api/assistant/feedback`
-- `GET    /api/assistant/suggestions`
-- `POST   /api/assistant/action-preview`
-- `POST   /api/assistant/action-confirm`
 
 ## 10. Limitações e decisões pendentes
 
-- A migração Prisma **não foi aplicada** à base de dados real — ver ponto 5.
-- Não existe modelo de dados de "Partilha" (grupos partilhados) nem de
-  orçamentos por categoria; o contexto reflete essa lacuna sem inventar
-  dados.
+- A migração Prisma do módulo do assistente — confirmar que já foi aplicada
+  ao ambiente de produção (`npx prisma migrate deploy`).
+- Não existe modelo de dados de "Partilha" nem de orçamentos por categoria,
+  nem de prazo/data-alvo em `Meta` — o contexto reflete essas lacunas sem
+  inventar dados.
 - O rate limit de rajada é em memória (não sobrevive a reinícios nem escala
   para várias instâncias).
-- Ainda não há endpoints de histórico/feedback (roadmap acima) — o
-  repositório já os suporta a nível de dados, faltam as rotas/controllers.
-- Nenhum fornecedor de IA foi escolhido, ligado ou instalado.
+- Não há ainda histórico de conversas persistido (`AssistantMessage` não é
+  escrito) nem endpoints de feedback — roadmap acima.

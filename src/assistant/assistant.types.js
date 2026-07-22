@@ -31,6 +31,7 @@ const PAPEL_MENSAGEM = Object.freeze({
  * @property {Array<object>} accounts
  * @property {Array<object>} upcomingPayments
  * @property {Array<object>} recurringTransactions
+ * @property {Array<{date: string, type: string, label: string, category: string, amount: number}>} recentTransactions - últimas 10, mais recente primeiro
  */
 
 /**

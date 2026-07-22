@@ -87,3 +87,41 @@ test("isola dados por período: startDate/endDate correspondem ao mês pedido", 
   assert.equal(ctx.period.startDate, "2026-02-01");
   assert.equal(ctx.period.endDate, "2026-02-28");
 });
+
+test("categorias ficam limitadas às 5 com mais peso (nunca a lista inteira)", async () => {
+  const despesas = [
+    { cat: "a", valor: 100 }, { cat: "b", valor: 90 }, { cat: "c", valor: 80 },
+    { cat: "d", valor: 70 }, { cat: "e", valor: 60 }, { cat: "f", valor: 50 }, { cat: "g", valor: 10 },
+  ];
+  const service = criarAssistantContextService(criarPrismaFalso({ despesas }));
+  const ctx = await service.gerarContexto(USER_BASE, "2026-07");
+  assert.equal(ctx.categories.length, 5);
+  assert.deepEqual(ctx.categories.map((c) => c.name), ["a", "b", "c", "d", "e"]);
+});
+
+test("orçamento inclui o valor já utilizado e o que resta, não só o limite", async () => {
+  const despesas = [{ cat: "Habitação", valor: 300 }];
+  const service = criarAssistantContextService(criarPrismaFalso({ despesas }));
+  const ctx = await service.gerarContexto({ ...USER_BASE, orcamento: 1000 }, "2026-07");
+  assert.deepEqual(ctx.budgets, [{ total: 1000, used: 300, remaining: 700, percentageUsed: 30 }]);
+});
+
+test("objetivos trazem a percentagem de progresso mas nunca um prazo inventado", async () => {
+  const metas = [{ id: "m1", nome: "Emergência", alvo: 1000, atual: 250 }];
+  const service = criarAssistantContextService(criarPrismaFalso({ metas }));
+  const ctx = await service.gerarContexto(USER_BASE, "2026-07");
+  assert.deepEqual(ctx.goals, [{ id: "m1", name: "Emergência", target: 1000, current: 250, progressPct: 25 }]);
+  ctx.goals.forEach((g) => assert.equal("deadline" in g, false));
+});
+
+test("últimas transações juntam despesas e rendimentos, mais recente primeiro, limitadas a 10", async () => {
+  const despesas = Array.from({ length: 8 }, (_, i) => ({ nome: `despesa${i}`, cat: "outros", valor: 10, data: `2026-07-${String(i + 1).padStart(2, "0")}` }));
+  const rendimentos = Array.from({ length: 8 }, (_, i) => ({ fonte: `rendimento${i}`, cat: "Outros", valor: 20, data: `2026-07-${String(i + 10).padStart(2, "0")}` }));
+  const service = criarAssistantContextService(criarPrismaFalso({ despesas, rendimentos }));
+  const ctx = await service.gerarContexto(USER_BASE, "2026-07");
+
+  assert.equal(ctx.recentTransactions.length, 10);
+  // A mais recente (maior data) vem primeiro.
+  assert.equal(ctx.recentTransactions[0].date, "2026-07-17");
+  assert.ok(ctx.recentTransactions.every((t, i, arr) => i === 0 || t.date <= arr[i - 1].date));
+});

@@ -17,9 +17,11 @@ const { AI_ENV } = require("../config");
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
 // Modelo por omissão: económico e rápido, bom para um assistente de finanças.
-// Podes trocar sem tocar no código, definindo AI_MODEL no .env (ex.: um modelo
-// mais capaz). Confirma os nomes disponíveis na tua conta na doc da Anthropic.
-const MODELO_PADRAO = "claude-3-5-haiku-latest";
+// "claude-haiku-4-5" é o alias oficial da Anthropic para o Claude Haiku 4.5
+// (resolve para o snapshot fixo claude-haiku-4-5-20251001 — ver
+// https://docs.claude.com/en/docs/about-claude/models/overview). Podes trocar
+// sem tocar no código, definindo AI_MODEL no .env.
+const MODELO_PADRAO = "claude-haiku-4-5";
 
 function erroProviderNaoConfigurado() {
   const erro = new Error("O assistente ainda não está configurado (falta a chave da IA).");
