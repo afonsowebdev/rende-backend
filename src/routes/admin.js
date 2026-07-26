@@ -18,21 +18,32 @@ const paginaPedida = (req) => Math.max(1, parseInt(req.query.page, 10) || 1);
 
 router.use(exigirLogin, exigirAdmin);
 
-/* ---- LISTAR UTILIZADORES (paginado, pesquisa por email) ---- */
+/* ---- LISTAR UTILIZADORES (paginado, pesquisa por email, ordenação e filtros) ---- */
+const CAMPOS_ORDENAVEIS = { createdAt: "createdAt", email: "email", plano: "plano" };
 router.get("/utilizadores", aw(async (req, res) => {
   const page = paginaPedida(req);
   const pesquisa = String(req.query.pesquisa || "").trim();
-  const where = pesquisa ? { email: { contains: pesquisa, mode: "insensitive" } } : {};
+  const campoOrdem = CAMPOS_ORDENAVEIS[req.query.sort] || "createdAt";
+  const dir = req.query.dir === "asc" ? "asc" : "desc";
+  const filtroPlano = ["free", "premium"].includes(req.query.plano) ? req.query.plano : null;
+  const filtroRole = ["user", "admin"].includes(req.query.role) ? req.query.role : null;
+
+  const where = {
+    ...(pesquisa ? { email: { contains: pesquisa, mode: "insensitive" } } : {}),
+    ...(filtroPlano ? { plano: filtroPlano } : {}),
+    ...(filtroRole ? { role: filtroRole } : {}),
+  };
 
   const [total, utilizadores] = await Promise.all([
     prisma.user.count({ where }),
     prisma.user.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: { [campoOrdem]: dir },
       skip: (page - 1) * TAMANHO_PAGINA,
       take: TAMANHO_PAGINA,
       select: {
         id: true, email: true, nome: true, plano: true, planoExpira: true, role: true, createdAt: true,
+        emailVerificado: true,
         _count: { select: { despesas: true, rendimentos: true } },
       },
     }),
@@ -41,6 +52,7 @@ router.get("/utilizadores", aw(async (req, res) => {
   res.json({
     utilizadores: utilizadores.map((u) => ({
       id: u.id, email: u.email, nome: u.nome, plano: u.plano, planoExpira: u.planoExpira, role: u.role, createdAt: u.createdAt,
+      emailVerificado: u.emailVerificado,
       totalDespesas: u._count.despesas, totalRendimentos: u._count.rendimentos,
     })),
     pagina: page,
@@ -117,12 +129,32 @@ router.get("/metricas", aw(async (req, res) => {
   const trintaDiasAtras = new Date(agora.getTime() - 30 * 24 * 60 * 60 * 1000);
   const periodoAtual = agora.toISOString().slice(0, 7); // "AAAA-MM"
 
-  const [totalUtilizadores, totalPremium, novosUtilizadores7dias, novosUtilizadores30dias, usoAssistente] = await Promise.all([
+  // Novos utilizadores por mês, últimos 6 meses (incluindo o atual) — para o
+  // gráfico de evolução no painel. Uma contagem por mês (não há muitos meses,
+  // não vale a pena complicar com groupBy/raw SQL só por isto).
+  // Nota: a "chave" (AAAA-MM) vem sempre do ano/mês LOCAIS do próprio "inicio"
+  // (nunca de toISOString, que pode recuar um dia — e por vezes um mês inteiro,
+  // se o dia 1 cair perto da meia-noite — consoante o fuso horário do servidor).
+  const mesesRange = Array.from({ length: 6 }, (_, i) => {
+    const inicio = new Date(agora.getFullYear(), agora.getMonth() - (5 - i), 1);
+    const fim = new Date(inicio.getFullYear(), inicio.getMonth() + 1, 1);
+    const chave = inicio.getFullYear() + "-" + String(inicio.getMonth() + 1).padStart(2, "0");
+    return { chave, inicio, fim };
+  });
+
+  const [
+    totalUtilizadores, totalPremium, novosUtilizadores7dias, novosUtilizadores30dias,
+    usoAssistente, totalDespesas, totalRendimentos, totalEmailVerificado, contagensPorMes,
+  ] = await Promise.all([
     prisma.user.count(),
     prisma.user.count({ where: { plano: "premium" } }),
     prisma.user.count({ where: { createdAt: { gte: seteDiasAtras } } }),
     prisma.user.count({ where: { createdAt: { gte: trintaDiasAtras } } }),
     prisma.assistantUsage.aggregate({ where: { period: periodoAtual }, _sum: { requestCount: true } }),
+    prisma.despesa.count(),
+    prisma.rendimento.count(),
+    prisma.user.count({ where: { emailVerificado: true } }),
+    Promise.all(mesesRange.map((m) => prisma.user.count({ where: { createdAt: { gte: m.inicio, lt: m.fim } } }))),
   ]);
 
   res.json({
@@ -132,6 +164,10 @@ router.get("/metricas", aw(async (req, res) => {
     novosUtilizadores30dias,
     usoAssistenteMesAtual: usoAssistente._sum.requestCount || 0,
     periodoAtual,
+    totalDespesas,
+    totalRendimentos,
+    totalEmailVerificado,
+    novosPorMes: mesesRange.map((m, i) => ({ mes: m.chave, total: contagensPorMes[i] })),
   });
 }));
 
