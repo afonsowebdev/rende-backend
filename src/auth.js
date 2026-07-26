@@ -11,6 +11,8 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const prisma = require("./db");
+const { aw } = require("./helpers");
 
 // O segredo que assina os tokens. Vem do .env (JWT_SECRET).
 const SEGREDO = process.env.JWT_SECRET || "muda-este-segredo-no-.env";
@@ -96,4 +98,16 @@ function exigirLogin(req, res, next) {
   }
 }
 
-module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin, gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword };
+/* "Guarda" extra para rotas de administração. Corre SEMPRE depois de
+   exigirLogin (precisa de req.userId já definido). Vai à base de dados
+   confirmar o role atual do utilizador — nunca confia em nada vindo do
+   token ou do pedido, só no que está guardado no User. */
+const exigirAdmin = aw(async (req, res, next) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId }, select: { role: true } });
+  if (!user || user.role !== "admin") {
+    return res.status(403).json({ erro: "Acesso restrito a administradores." });
+  }
+  next();
+});
+
+module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin, exigirAdmin, gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword };

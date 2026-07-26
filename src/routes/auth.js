@@ -75,6 +75,8 @@ const dadosPublicos = (user) => ({
   // ---- plano / subscrição ----
   plano: user.plano || "free",
   planoExpira: user.planoExpira || null,
+  // ---- permissões (separado do plano — ver painel de administração) ----
+  role: user.role || "user",
 });
 
 // Recolhe (de forma segura) os campos de perfil do onboarding a partir do corpo do pedido.

@@ -41,6 +41,11 @@ model User {
   principaisDespesas String[] @default([]) // ex.: ["Renda", "Alimentação"]
   notificacoes    Boolean    @default(true)
   resumoSemanal   Boolean    @default(true)
+  // ---- Permissões (separado do plano — plano é o nível de subscrição,
+  //  role é quem pode aceder ao painel de administração). Nunca deve ser
+  //  definido a "admin" por nenhum fluxo de auto-registo — só manualmente
+  //  na base de dados (ver README do painel admin).
+  role             String    @default("user") // "user" | "admin"
   // ---- Plano / subscrição ----
   //  O premium não é outro sistema: é a mesma conta com um "nível".
   //  "free" por defeito; passa a "premium" quando houver um pagamento ativo.
@@ -69,6 +74,8 @@ model User {
   assistantMessages      AssistantMessage[]
   assistantUsage         AssistantUsage[]
   assistantFeedback      AssistantFeedback[]
+  // ---- Painel de administração ----
+  adminAuditLogs AdminAuditLog[] // ações que este utilizador fez enquanto admin
 }
 
 // ---- Lembretes (Premium): pagamentos a não esquecer ----
@@ -237,4 +244,27 @@ model AssistantFeedback {
 
   @@index([messageId])
   @@index([userId])
+}
+
+// =========================================================
+//  Painel de administração
+// ---------------------------------------------------------
+//  Regista todas as ações feitas por administradores (ex.: mudar
+//  o plano de um utilizador manualmente), para haver sempre um
+//  histórico de quem fez o quê. adminId é opcional e o apagar do
+//  admin não apaga o registo (onDelete: SetNull) — o histórico
+//  tem de sobreviver mesmo que a conta do admin deixe de existir.
+// =========================================================
+model AdminAuditLog {
+  id         String   @id @default(cuid())
+  adminId    String? // quem fez a ação (fica null se essa conta for apagada — o registo mantém-se)
+  acao       String   // ex.: "mudar_plano"
+  alvoUserId String   // id do utilizador afetado (texto simples, sem relação — sobrevive mesmo que esse utilizador seja apagado)
+  detalhes   String   // JSON em texto com o que mudou (ex.: {"de":"free","para":"premium"})
+  createdAt  DateTime @default(now())
+
+  admin User? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([adminId])
+  @@index([alvoUserId])
 }
