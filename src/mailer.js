@@ -9,7 +9,7 @@
 
    Variáveis no .env (ou no Render Environment):
      RESEND_API_KEY   (a chave que geraste no Resend)
-     MAIL_FROM        Rende+ <contacto@rendemais.pt>
+     MAIL_FROM        Rende+ <geral@rendemais.pt>
 
    Se não houver RESEND_API_KEY, mostra o código na consola (modo dev).
    ========================================================= */
@@ -113,7 +113,7 @@ function htmlRecuperacao(nome, codigo) {
 
 /* Função interna que faz o pedido ao Resend. */
 async function enviar(para, assunto, html, codigo, etiqueta) {
-  const from = process.env.MAIL_FROM || "Rende+ <contacto@rendemais.pt>";
+  const from = process.env.MAIL_FROM || "Rende+ <geral@rendemais.pt>";
 
   if (!emailConfigurado()) {
     console.warn("[mailer] RESEND_API_KEY NÃO configurada — os emails NÃO são enviados.");
