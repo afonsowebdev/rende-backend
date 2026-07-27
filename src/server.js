@@ -18,6 +18,7 @@ const cors = require("cors");
 
 // 2) Criamos a nossa aplicação/servidor.
 const app = express();
+const prisma = require("./db");
 
 // 2b) Importamos as rotas de cada tabela (ficheiros em src/routes/).
 const despesasRouter   = require("./routes/despesas");
@@ -30,6 +31,7 @@ const authRouter       = require("./routes/auth");
 const pagamentosRouter = require("./routes/pagamentos");
 const assistantRouter  = require("./assistant/assistant.routes");
 const adminRouter      = require("./routes/admin");
+const anunciosRouter   = require("./routes/anuncios");
 
 // Recurso Premium criado com a fábrica CRUD (crud.js): as 4 rotas
 // (listar, criar, editar, apagar) são geradas automaticamente.
@@ -48,7 +50,10 @@ const lembretesRouter = crudRouter({
 const PORT = process.env.PORT || 3000;
 
 // 4) CORS: deixa o teu frontend (noutro endereço) falar com esta API.
-app.use(cors());
+//    exposedHeaders: sem isto, o browser esconde o Content-Disposition da
+//    resposta (ex.: exportar CSV) mesmo vindo de um pedido bem-sucedido —
+//    é uma restrição de CORS, não do servidor.
+app.use(cors({ exposedHeaders: ["Content-Disposition"] }));
 
 // 4b) Permite que o servidor entenda pedidos com corpo em JSON.
 app.use(express.json());
@@ -71,6 +76,7 @@ app.get("/", (req, res) => {
       "/api/lembretes",
       "/api/pagamentos/checkout",
       "/api/assistant/chat",
+      "/api/anuncios/ativo",
     ],
   });
 });
@@ -94,11 +100,21 @@ app.use("/api/pagamentos", pagamentosRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/assistant", assistantRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/anuncios", anunciosRouter);
 
 // 6c) Tratador de erros central: se algo correr mal numa rota,
-//     respondemos com um JSON em vez de derrubar o servidor.
+//     respondemos com um JSON em vez de derrubar o servidor. Além disso,
+//     guardamos um resumo (mensagem/stack/rota/data) em ErroSistema para
+//     o painel de administração (GET /api/admin/erros) — nunca o corpo do
+//     pedido, query ou cabeçalhos, para não guardar dados sensíveis. É
+//     "fire-and-forget" (não é aguardado): a resposta ao pedido original
+//     não pode ficar à espera da escrita do log, e uma eventual falha a
+//     gravar o log nunca deve impedir a resposta de erro já prevista.
 app.use((err, req, res, next) => {
   console.error(err);
+  prisma.erroSistema.create({
+    data: { mensagem: String(err && err.message || err), stack: (err && err.stack) || null, rota: req.method + " " + req.originalUrl },
+  }).catch((e) => console.error("[erroSistema] falha ao guardar log de erro:", e));
   res.status(500).json({ erro: "Erro interno do servidor." });
 });
 

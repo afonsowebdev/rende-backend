@@ -211,6 +211,7 @@ router.post("/login", aw(async (req, res) => {
   if (!user.emailVerificado) {
     return res.status(403).json({ erro: "Confirma o teu email antes de entrar." });
   }
+  await prisma.user.update({ where: { id: user.id }, data: { ultimoLogin: new Date() } });
   const token = criarToken(user.id);
   res.json({ token, user: dadosPublicos(user) });
 }));

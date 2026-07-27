@@ -81,22 +81,41 @@ function validarPassword(p) {
 /* "Guarda" de rotas protegidas.
    Lê o token do cabeçalho  Authorization: Bearer <token>.
    Se for válido, guarda o id do utilizador em req.userId e deixa passar.
-   Se não, responde 401 (não autorizado). */
-function exigirLogin(req, res, next) {
+   Se não, responde 401 (não autorizado).
+
+   Além de verificar a assinatura, confirma que o token não é anterior a um
+   eventual "forçar logout" feito por um admin (User.sessaoInvalidadaEm): o
+   JWT já traz sempre um "iat" (data de emissão, em segundos) mesmo sem o
+   definirmos explicitamente — comparamos isso com essa data. Isto obriga a
+   uma leitura extra à base de dados em (quase) todos os pedidos autenticados,
+   mas é a forma mais simples de suportar logout forçado sem introduzir uma
+   blacklist de tokens (ex.: Redis) só para este caso raro. */
+const exigirLogin = aw(async (req, res, next) => {
   const cabecalho = req.headers.authorization || "";
   const token = cabecalho.startsWith("Bearer ") ? cabecalho.slice(7) : null;
 
   if (!token) {
     return res.status(401).json({ erro: "É preciso iniciar sessão." });
   }
+
+  let dados;
   try {
-    const dados = jwt.verify(token, SEGREDO);
-    req.userId = dados.userId;
-    next(); // tudo certo — segue para a rota
+    dados = jwt.verify(token, SEGREDO);
   } catch {
-    res.status(401).json({ erro: "Sessão inválida ou expirada." });
+    return res.status(401).json({ erro: "Sessão inválida ou expirada." });
   }
-}
+
+  const user = await prisma.user.findUnique({ where: { id: dados.userId }, select: { sessaoInvalidadaEm: true } });
+  if (!user) {
+    return res.status(401).json({ erro: "Sessão inválida ou expirada." });
+  }
+  if (user.sessaoInvalidadaEm && dados.iat && dados.iat * 1000 < user.sessaoInvalidadaEm.getTime()) {
+    return res.status(401).json({ erro: "A tua sessão foi terminada. Inicia sessão novamente." });
+  }
+
+  req.userId = dados.userId;
+  next();
+});
 
 /* "Guarda" extra para rotas de administração. Corre SEMPRE depois de
    exigirLogin (precisa de req.userId já definido). Vai à base de dados

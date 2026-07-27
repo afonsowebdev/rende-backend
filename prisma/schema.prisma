@@ -62,6 +62,16 @@ model User {
   // ---- Data de nascimento (bloqueia 7 dias depois de ser definida) ----
   dataNascimento      String?   // formato AAAA-MM-DD
   nascimentoDefinidoEm DateTime? // quando foi definida pela 1.ª vez (conta os 7 dias a partir daqui)
+  // ---- Sessão / atividade (painel de administração) ----
+  //  sessaoInvalidadaEm: quando um admin força o logout desta conta. Os tokens
+  //  JWT não têm blacklist própria — em vez disso, exigirLogin compara o "iat"
+  //  (data de emissão) do token com esta data; qualquer token emitido antes
+  //  passa a ser recusado. null = nunca foi forçado nenhum logout.
+  sessaoInvalidadaEm DateTime?
+  //  ultimoLogin: preenchido em POST /api/auth/login a cada início de sessão
+  //  bem-sucedido. Campo novo (não existia antes) — contas que nunca fizerem
+  //  login a partir de agora ficam com null.
+  ultimoLogin        DateTime?
   createdAt   DateTime     @default(now())
   despesas    Despesa[]
   rendimentos Rendimento[]
@@ -267,4 +277,29 @@ model AdminAuditLog {
 
   @@index([adminId])
   @@index([alvoUserId])
+}
+
+// ---- Anúncios/avisos dentro da app (banner no dashboard normal) ----
+//  Só um costuma estar ativo de cada vez (o mais recente com ativo=true é o
+//  que aparece no banner — ver GET /api/anuncios/ativo), mas o campo não tem
+//  restrição de unicidade: o admin pode desativar/reativar livremente.
+model Anuncio {
+  id              String   @id @default(cuid())
+  titulo          String
+  mensagem        String
+  ativo           Boolean  @default(true)
+  criadoEm        DateTime @default(now())
+  criadoPorAdminId String? // quem criou (fica null se essa conta de admin for apagada)
+}
+
+// ---- Erros do sistema (capturados pelo tratador de erros central do
+//  servidor — ver server.js) — resumo apenas: mensagem, stack (opcional),
+//  rota e data. De propósito SEM dados do pedido (body/query/headers),
+//  para nunca guardar dados sensíveis de utilizadores nos logs. ----
+model ErroSistema {
+  id        String   @id @default(cuid())
+  mensagem  String
+  stack     String?
+  rota      String
+  criadoEm  DateTime @default(now())
 }
