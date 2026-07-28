@@ -111,6 +111,32 @@ function htmlRecuperacao(nome, codigo) {
     </td></tr>`);
 }
 
+/* Botão de ação (CTA) — mesmo tratamento visual da caixa do código, mas com
+   um link em vez de um código para escrever. Usado no convite de grupo. */
+function caixaBotao(link, texto) {
+  return `<tr><td style="padding:16px 28px 6px;">
+    <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:16px;padding:26px 18px;text-align:center;">
+      <a href="${link}" style="display:inline-block;background:#0a5a3c;color:#ffffff;font-size:15px;font-weight:800;padding:13px 28px;border-radius:999px;text-decoration:none;">${texto}</a>
+    </div>
+  </td></tr>`;
+}
+
+/* ---- Email 3: convite para grupo de Partilha ---- */
+function htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar) {
+  const ola = nomeConvidado ? `Olá, ${nomeConvidado}` : "Olá";
+  return moldura(`
+    <tr><td style="padding:30px 28px 6px;">
+      <h1 style="margin:0 0 8px;font-size:21px;font-weight:800;letter-spacing:-.02em;">${ola}!</h1>
+      <p style="margin:0;font-size:14.5px;line-height:1.6;color:#475569;"><strong>${nomeConvidante}</strong> convidou-te para o grupo <strong>${nomeGrupo}</strong> no Rende+, para partilharem despesas em conjunto.</p>
+    </td></tr>
+    ${caixaBotao(linkAceitar, "Ver convite no Rende+")}
+    <tr><td style="padding:8px 28px 4px;">
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">Precisas de ter sessão iniciada e conta Premium para aceitar. Se não conheces ${nomeConvidante} ou não esperavas este convite, podes ignorar este email.</p>
+    </td></tr>
+    ${blocoPromo()}
+    <tr><td style="padding:6px 28px 26px;"></td></tr>`);
+}
+
 /* Função interna que faz o pedido ao Resend. */
 async function enviar(para, assunto, html, codigo, etiqueta) {
   const from = process.env.MAIL_FROM || "Rende+ <geral@rendemais.pt>";
@@ -154,9 +180,14 @@ async function enviarEmailRecuperacao(para, nome, codigo) {
   return enviar(para, "Repor a palavra-passe — Rende+", htmlRecuperacao(nome, codigo), codigo, "Código de recuperação");
 }
 
+async function enviarEmailConvite(para, nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar) {
+  return enviar(para, `${nomeConvidante} convidou-te para um grupo — Rende+`, htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar), linkAceitar, "Link de convite");
+}
+
 module.exports = {
   enviarEmailVerificacao,
   enviarEmailRecuperacao,
+  enviarEmailConvite,
   emailConfigurado,
   smtpConfigurado: emailConfigurado,
 };

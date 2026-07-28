@@ -32,6 +32,7 @@ const pagamentosRouter = require("./routes/pagamentos");
 const assistantRouter  = require("./assistant/assistant.routes");
 const adminRouter      = require("./routes/admin");
 const anunciosRouter   = require("./routes/anuncios");
+const gruposRouter     = require("./routes/grupos");
 
 // Recurso Premium criado com a fábrica CRUD (crud.js): as 4 rotas
 // (listar, criar, editar, apagar) são geradas automaticamente.
@@ -101,6 +102,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/assistant", assistantRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/anuncios", anunciosRouter);
+app.use("/api/grupos", gruposRouter);
 
 // 6c) Tratador de erros central: se algo correr mal numa rota,
 //     respondemos com um JSON em vez de derrubar o servidor. Além disso,

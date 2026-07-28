@@ -53,6 +53,24 @@ function verificarTokenSetup(token) {
   }
 }
 
+/* ----- Convites para grupos de Partilha ----- */
+
+// Token que vai no link do email de convite (7 dias, tal como a sessão normal).
+// Só identifica QUAL convite é — quem clica ainda tem de confirmar sessão
+// (exigirLogin) e ser o próprio convidado antes de aceitar/recusar.
+function criarTokenConvite(conviteId) {
+  return jwt.sign({ conviteId, scope: "grupo-convite" }, SEGREDO, { expiresIn: "7d" });
+}
+// Confirma esse token; devolve o conviteId ou null.
+function verificarTokenConvite(token) {
+  try {
+    const d = jwt.verify(token, SEGREDO);
+    return d.scope === "grupo-convite" ? d.conviteId : null;
+  } catch {
+    return null;
+  }
+}
+
 /* Regras de força da palavra-passe (validadas no servidor, não dá para contornar).
    Devolve uma mensagem de erro, ou null se estiver tudo bem. */
 const PW_COMUNS = new Set(["12345678", "123456789", "1234567890", "password", "password1", "qwerty123", "11111111", "00000000", "abc12345", "senha123", "12341234", "aa123456"]);
@@ -129,4 +147,4 @@ const exigirAdmin = aw(async (req, res, next) => {
   next();
 });
 
-module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin, exigirAdmin, gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword };
+module.exports = { cifrarPassword, compararPassword, criarToken, exigirLogin, exigirAdmin, gerarCodigo, criarTokenSetup, verificarTokenSetup, criarTokenConvite, verificarTokenConvite, validarPassword };

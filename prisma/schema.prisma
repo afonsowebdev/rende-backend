@@ -87,6 +87,11 @@ model User {
   assistantFeedback      AssistantFeedback[]
   // ---- Painel de administração ----
   adminAuditLogs AdminAuditLog[] // ações que este utilizador fez enquanto admin
+  // ---- Partilha (grupos partilhados, Premium) ----
+  gruposCriados    Grupo[]        @relation("GrupoCriador")
+  gruposMembro     GrupoMembro[]
+  convitesRecebidos GrupoConvite[] @relation("ConviteConvidado")
+  convitesEnviados  GrupoConvite[] @relation("ConviteConvidante")
 }
 
 // ---- Lembretes (Premium): pagamentos a não esquecer ----
@@ -303,4 +308,64 @@ model ErroSistema {
   stack     String?
   rota      String
   criadoEm  DateTime @default(now())
+}
+
+// =========================================================
+//  Partilha (grupos partilhados) — Fase 1: só grupos, membros
+//  e convites REAIS (com email a sério). Despesas partilhadas,
+//  saldos e chat de grupo continuam simulados no frontend
+//  (localStorage) por agora — ver premium.jsx — e ficam para
+//  uma fase seguinte, fora do âmbito desta primeira versão.
+// ---------------------------------------------------------
+//  Só quem já tem conta Rende+ pode ser convidado (decisão
+//  explícita): por isso convidadoId é sempre uma relação real a
+//  um User, nunca só um email solto. Tanto quem cria o grupo
+//  como quem aceita o convite têm de ser Premium — verificado
+//  sempre no backend (routes/grupos.js), nunca só no frontend.
+// =========================================================
+model Grupo {
+  id          String   @id @default(cuid())
+  nome        String
+  descricao   String?
+  criadoPorId String
+  createdAt   DateTime @default(now())
+
+  criadoPor User          @relation("GrupoCriador", fields: [criadoPorId], references: [id], onDelete: Cascade)
+  membros   GrupoMembro[]
+  convites  GrupoConvite[]
+
+  @@index([criadoPorId])
+}
+
+// ---- Membros reais de um grupo (o criador entra logo como "owner") ----
+model GrupoMembro {
+  id        String   @id @default(cuid())
+  grupoId   String
+  userId    String
+  papel     String   @default("membro") // "owner" | "membro"
+  entradaEm DateTime @default(now())
+
+  grupo Grupo @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([grupoId, userId])
+  @@index([userId])
+}
+
+// ---- Convites para entrar num grupo (por email, sempre a um User já existente) ----
+model GrupoConvite {
+  id             String    @id @default(cuid())
+  grupoId        String
+  convidadoId    String    // User convidado (tem de já ter conta)
+  convidadoPorId String    // User que enviou o convite
+  estado         String    @default("pendente") // "pendente" | "aceite" | "recusado"
+  criadoEm       DateTime  @default(now())
+  respondidoEm   DateTime?
+
+  grupo      Grupo @relation(fields: [grupoId], references: [id], onDelete: Cascade)
+  convidado  User  @relation("ConviteConvidado", fields: [convidadoId], references: [id], onDelete: Cascade)
+  convidante User  @relation("ConviteConvidante", fields: [convidadoPorId], references: [id], onDelete: Cascade)
+
+  @@index([grupoId])
+  @@index([convidadoId])
 }
