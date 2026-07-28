@@ -260,9 +260,33 @@ router.patch("/eu", exigirLogin, aw(async (req, res) => {
    Apaga o utilizador. Como todas as relações têm onDelete: Cascade,
    as despesas, rendimentos, metas, aforros, contas e categorias são
    apagadas automaticamente. O email fica livre para criar tudo de novo. */
+/* Ação destrutiva e irreversível — por segurança, exige sempre a palavra-passe
+   atual no corpo do pedido (o frontend já confirma com um modal antes de
+   chegar aqui, mas a confirmação a sério é sempre aqui, nunca só no frontend). */
 router.delete("/eu", exigirLogin, aw(async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  if (!user || !user.password || !(await compararPassword(String(req.body.password || ""), user.password))) {
+    return res.status(401).json({ erro: "Palavra-passe incorreta." });
+  }
   await prisma.user.delete({ where: { id: req.userId } });
   res.json({ ok: true, mensagem: "Conta eliminada." });
+}));
+
+/* Limpar todos os dados (despesas, rendimentos, metas — com os aforros lá
+   dentro, por cascade — e categorias), mantendo a conta. Também destrutivo e
+   irreversível, por isso a mesma exigência de palavra-passe atual. */
+router.post("/eu/limpar-dados", exigirLogin, aw(async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  if (!user || !user.password || !(await compararPassword(String(req.body.password || ""), user.password))) {
+    return res.status(401).json({ erro: "Palavra-passe incorreta." });
+  }
+  await prisma.$transaction([
+    prisma.despesa.deleteMany({ where: { userId: req.userId } }),
+    prisma.rendimento.deleteMany({ where: { userId: req.userId } }),
+    prisma.meta.deleteMany({ where: { userId: req.userId } }),
+    prisma.categoria.deleteMany({ where: { userId: req.userId } }),
+  ]);
+  res.json({ ok: true, mensagem: "Todos os dados foram apagados." });
 }));
 
 /* =========================================================
