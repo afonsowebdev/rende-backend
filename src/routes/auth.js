@@ -21,7 +21,7 @@ const {
   gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword,
 } = require("../auth");
 const { aw } = require("../helpers");
-const { enviarEmailVerificacao, enviarEmailRecuperacao } = require("../mailer");
+const { enviarEmailVerificacao, enviarEmailRecuperacao, enviarEmailMudarPassword } = require("../mailer");
 
 const QUINZE_MIN = 15 * 60 * 1000;
 const SETE_DIAS = 7 * 24 * 60 * 60 * 1000;
@@ -326,6 +326,64 @@ router.post("/redefinir-password", aw(async (req, res) => {
   });
   const token = criarToken(atualizado.id); // inicia sessão logo, já que provou o código
   res.json({ ok: true, token, user: dadosPublicos(atualizado), mensagem: "Palavra-passe alterada com sucesso." });
+}));
+
+/* =========================================================
+   ALTERAR PALAVRA-PASSE (utilizador já com sessão iniciada)
+   ---------------------------------------------------------
+   Diferente da recuperação acima (essa é para quem não consegue entrar).
+   Aqui a pessoa já está autenticada, mas ainda assim exigimos confirmação
+   por código enviado por email antes de aceitar a password nova — e, ao
+   confirmar, terminamos a sessão em TODOS os dispositivos (via
+   sessaoInvalidadaEm, o mesmo mecanismo já usado no "forçar logout" do
+   painel de administração), incluindo o dispositivo atual: a pessoa tem de
+   voltar a entrar já com a palavra-passe nova, em todo o lado.
+   Reutiliza os mesmos campos codigoReset/codigoResetExpira da recuperação
+   (não há dois pedidos de código em simultâneo para a mesma conta, por isso
+   partilhar o campo é seguro e evita duplicar o schema).
+   ========================================================= */
+
+router.post("/mudar-password/pedir-codigo", exigirLogin, aw(async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  if (!user || !user.password) return res.status(400).json({ erro: "Conta inválida para esta ação." });
+
+  const codigo = gerarCodigo();
+  await prisma.user.update({
+    where: { id: req.userId },
+    data: { codigoReset: await cifrarPassword(codigo), codigoResetExpira: new Date(Date.now() + QUINZE_MIN) },
+  });
+  await enviarEmailMudarPassword(user.email, user.nome, codigo);
+  res.json({ ok: true, mensagem: "Enviámos um código de 6 dígitos para o teu email." });
+}));
+
+router.post("/mudar-password/confirmar", exigirLogin, aw(async (req, res) => {
+  const codigo = String(req.body.codigo || "").trim();
+  const { novaPassword } = req.body;
+
+  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  if (!user || !user.codigoReset || !user.codigoResetExpira) {
+    return res.status(400).json({ erro: "Pede um novo código." });
+  }
+  if (new Date() > user.codigoResetExpira) {
+    return res.status(400).json({ erro: "O código expirou. Pede um novo." });
+  }
+  if (!(await compararPassword(codigo, user.codigoReset))) {
+    return res.status(400).json({ erro: "Código incorreto." });
+  }
+  const erroPw = validarPassword(novaPassword);
+  if (erroPw) return res.status(400).json({ erro: erroPw });
+
+  await prisma.user.update({
+    where: { id: req.userId },
+    data: {
+      password: await cifrarPassword(novaPassword),
+      codigoReset: null,
+      codigoResetExpira: null,
+      sessaoInvalidadaEm: new Date(), // termina a sessão em todos os dispositivos, incluindo este
+    },
+  });
+
+  res.json({ ok: true, mensagem: "Palavra-passe alterada. A tua sessão foi terminada em todos os dispositivos — inicia sessão de novo com a palavra-passe nova." });
 }));
 
 module.exports = router;

@@ -111,6 +111,22 @@ function htmlRecuperacao(nome, codigo) {
     </td></tr>`);
 }
 
+/* ---- Email 3: confirmar alteração de palavra-passe (utilizador já com sessão
+   iniciada, a pedir para mudar a password nas Definições — diferente do "Recuperação",
+   que é para quem não consegue entrar). ---- */
+function htmlMudarPassword(nome, codigo) {
+  const ola = nome ? `Olá, ${nome}` : "Olá";
+  return moldura(`
+    <tr><td style="padding:30px 28px 6px;">
+      <h1 style="margin:0 0 8px;font-size:21px;font-weight:800;letter-spacing:-.02em;">${ola}!</h1>
+      <p style="margin:0;font-size:14.5px;line-height:1.6;color:#475569;">Pediste para alterar a palavra-passe da tua conta Rende+. Usa este código para confirmar:</p>
+    </td></tr>
+    ${caixaCodigo(codigo)}
+    <tr><td style="padding:8px 28px 26px;">
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">Depois de confirmares, a tua sessão é terminada em todos os dispositivos por segurança — vais precisar de entrar de novo com a palavra-passe nova. Se não foste tu a pedir isto, <strong>ignora este email</strong> — a tua palavra-passe atual continua válida.</p>
+    </td></tr>`);
+}
+
 /* Botão de ação (CTA) — mesmo tratamento visual da caixa do código, mas com
    um link em vez de um código para escrever. Usado no convite de grupo. */
 function caixaBotao(link, texto) {
@@ -184,10 +200,15 @@ async function enviarEmailConvite(para, nomeConvidado, nomeGrupo, nomeConvidante
   return enviar(para, `${nomeConvidante} convidou-te para um grupo — Rende+`, htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar), linkAceitar, "Link de convite");
 }
 
+async function enviarEmailMudarPassword(para, nome, codigo) {
+  return enviar(para, "Confirma a alteração da palavra-passe — Rende+", htmlMudarPassword(nome, codigo), codigo, "Código para mudar a palavra-passe");
+}
+
 module.exports = {
   enviarEmailVerificacao,
   enviarEmailRecuperacao,
   enviarEmailConvite,
+  enviarEmailMudarPassword,
   emailConfigurado,
   smtpConfigurado: emailConfigurado,
 };
