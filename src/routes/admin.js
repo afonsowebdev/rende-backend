@@ -12,7 +12,7 @@ const router = express.Router();
 const prisma = require("../db");
 const { exigirLogin, exigirAdmin, gerarCodigo, cifrarPassword } = require("../auth");
 const { aw } = require("../helpers");
-const { enviarEmailVerificacao } = require("../mailer");
+const { enviarEmailVerificacao, enviarEmailCampanha } = require("../mailer");
 const { limiteMensalDoPlano } = require("../assistant/config");
 const criarAssistantUsageService = require("../assistant/assistant-usage.service");
 const assistantUsage = criarAssistantUsageService(prisma);
@@ -470,6 +470,136 @@ router.get("/assistente-uso", aw(async (req, res) => {
         };
       }),
   });
+}));
+
+/* ============================================================
+   REENGAJAMENTO POR EMAIL
+   ============================================================ */
+
+/* ---- UTILIZADORES INATIVOS (registados que nunca usaram o Rende+) ----
+   Definição: nunca fizeram login (ultimoLogin null) E registados há mais de
+   `diasRegistado` dias. Filtros adicionais: fonteRegisto (web/app) e país —
+   só os campos que realmente existem nos dados; não há "fonte de ação"
+   granular (só sabemos se fez login ou não, nunca outras ações). */
+router.get("/utilizadores-inativos", aw(async (req, res) => {
+  const page = paginaPedida(req);
+  const diasRegistado = Math.max(0, parseInt(req.query.diasRegistado, 10) || 7);
+  const corte = new Date(Date.now() - diasRegistado * 24 * 60 * 60 * 1000);
+  const fonteRegisto = ["web", "app"].includes(req.query.fonteRegisto) ? req.query.fonteRegisto : null;
+  const pais = req.query.pais && req.query.pais !== "todos" ? String(req.query.pais) : null;
+
+  const where = {
+    ultimoLogin: null,
+    createdAt: { lte: corte },
+    ...(fonteRegisto ? { fonteRegisto } : {}),
+    ...(pais ? { pais } : {}),
+  };
+
+  const trintaDiasAtras = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [total, utilizadores, emailsEnviados30d] = await Promise.all([
+    prisma.user.count({ where }),
+    prisma.user.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * TAMANHO_PAGINA,
+      take: TAMANHO_PAGINA,
+      select: { id: true, email: true, nome: true, createdAt: true, pais: true, fonteRegisto: true, aceitaEmailsReengajamento: true },
+    }),
+    // Contagem real (não uma estimativa local) — emails de campanha enviados
+    // com sucesso nos últimos 30 dias, de qualquer campanha.
+    prisma.reengajamentoEmail.count({ where: { estado: "enviado", enviadoEm: { gte: trintaDiasAtras } } }),
+  ]);
+
+  res.json({
+    utilizadores,
+    pagina: page,
+    tamanhoPagina: TAMANHO_PAGINA,
+    total,
+    emailsEnviados30d,
+    totalPaginas: Math.max(1, Math.ceil(total / TAMANHO_PAGINA)),
+  });
+}));
+
+// Substitui {{nome}} pelo nome do utilizador (ou a parte antes do @ do email,
+// se não tiver nome) — usado no assunto e no corpo da campanha.
+const substituirVariaveis = (texto, user) =>
+  String(texto || "").replace(/\{\{\s*nome\s*\}\}/g, user.nome || (user.email || "").split("@")[0] || "utilizador");
+
+/* ---- ENVIAR CAMPANHA DE EMAIL (reengajamento) ----
+   Nunca envia a quem tiver aceitaEmailsReengajamento === false — filtro
+   sempre aplicado aqui no servidor, nunca confiado ao frontend. Responde de
+   imediato com a contagem real; o envio em si acontece a seguir em lotes
+   pequenos com atraso entre eles (não bloqueia o pedido nem dispara tudo de
+   uma vez para o Resend). Cada envio (sucesso ou falha) fica registado em
+   ReengajamentoEmail. */
+router.post("/campanhas-email", aw(async (req, res) => {
+  const assunto = String(req.body.assunto || "").trim();
+  const corpoHtml = String(req.body.corpoHtml || "").trim();
+  if (!assunto || !corpoHtml) {
+    return res.status(400).json({ erro: "Indica o assunto e a mensagem." });
+  }
+
+  let alvo;
+  if (req.body.selecionarTodos) {
+    const filtros = req.body.filtros || {};
+    const diasRegistado = Math.max(0, parseInt(filtros.diasRegistado, 10) || 7);
+    const corte = new Date(Date.now() - diasRegistado * 24 * 60 * 60 * 1000);
+    const fonteRegisto = ["web", "app"].includes(filtros.fonteRegisto) ? filtros.fonteRegisto : null;
+    const pais = filtros.pais && filtros.pais !== "todos" ? String(filtros.pais) : null;
+    alvo = await prisma.user.findMany({
+      where: {
+        ultimoLogin: null, createdAt: { lte: corte },
+        ...(fonteRegisto ? { fonteRegisto } : {}), ...(pais ? { pais } : {}),
+      },
+      select: { id: true, email: true, nome: true, aceitaEmailsReengajamento: true },
+    });
+  } else {
+    const userIds = Array.isArray(req.body.userIds) ? req.body.userIds.slice(0, 5000) : [];
+    if (!userIds.length) return res.status(400).json({ erro: "Seleciona pelo menos um utilizador." });
+    alvo = await prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, email: true, nome: true, aceitaEmailsReengajamento: true },
+    });
+  }
+
+  const destinatarios = alvo.filter((u) => u.aceitaEmailsReengajamento === true);
+  const ignoradosSemConsentimento = alvo.length - destinatarios.length;
+  if (!destinatarios.length) {
+    return res.status(400).json({ erro: "Nenhum dos utilizadores selecionados aceita emails de reengajamento." });
+  }
+
+  const campanhaId = "camp_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  await prisma.adminAuditLog.create({
+    data: {
+      adminId: req.userId, acao: "enviar_campanha_email", alvoUserId: campanhaId,
+      detalhes: JSON.stringify({ campanhaId, assunto, destinatarios: destinatarios.length, ignoradosSemConsentimento }),
+    },
+  });
+
+  res.status(202).json({ ok: true, campanhaId, aEnviar: destinatarios.length, ignoradosSemConsentimento });
+
+  // Envio em segundo plano — a resposta já foi enviada acima.
+  (async () => {
+    const TAMANHO_LOTE = 5;
+    const ATRASO_MS = 400;
+    for (let i = 0; i < destinatarios.length; i += TAMANHO_LOTE) {
+      const lote = destinatarios.slice(i, i + TAMANHO_LOTE);
+      await Promise.all(lote.map(async (u) => {
+        const assuntoUser = substituirVariaveis(assunto, u);
+        const corpoUser = substituirVariaveis(corpoHtml, u);
+        try {
+          await enviarEmailCampanha(u.email, assuntoUser, corpoUser);
+          await prisma.reengajamentoEmail.create({ data: { userId: u.id, campanhaId, assunto: assuntoUser, estado: "enviado" } });
+        } catch (e) {
+          await prisma.reengajamentoEmail.create({
+            data: { userId: u.id, campanhaId, assunto: assuntoUser, estado: "falhou", erro: (e && e.message) || "erro desconhecido" },
+          }).catch(() => {});
+        }
+      }));
+      if (i + TAMANHO_LOTE < destinatarios.length) await new Promise((r) => setTimeout(r, ATRASO_MS));
+    }
+  })().catch((e) => console.error("[campanhas-email] erro no envio em lote:", e));
 }));
 
 module.exports = router;

@@ -42,6 +42,16 @@ model User {
   principaisDespesas String[] @default([]) // ex.: ["Renda", "Alimentação"]
   notificacoes    Boolean    @default(true)
   resumoSemanal   Boolean    @default(true)
+  // ---- Reengajamento por email (painel de administração) ----
+  //  fonteRegisto: de onde veio o registo ("web" | "app") — usado só para
+  //  filtrar campanhas, nunca para lógica de negócio. Contas anteriores a
+  //  este campo ficam como "web" (o que já existia antes da app nativa).
+  //  aceitaEmailsReengajamento: consentimento DEDICADO a emails de marketing/
+  //  reengajamento — de propósito separado de `notificacoes` (que é sobre
+  //  notificações dentro da app, não sobre emails). Nunca enviar campanhas
+  //  a quem tiver isto a false, em nenhuma circunstância.
+  fonteRegisto                String  @default("web") // "web" | "app"
+  aceitaEmailsReengajamento   Boolean @default(true)
   // ---- Permissões (separado do plano — plano é o nível de subscrição,
   //  role é quem pode aceder ao painel de administração). Nunca deve ser
   //  definido a "admin" por nenhum fluxo de auto-registo — só manualmente
@@ -92,6 +102,26 @@ model User {
   gruposMembro     GrupoMembro[]
   convitesRecebidos GrupoConvite[] @relation("ConviteConvidado")
   convitesEnviados  GrupoConvite[] @relation("ConviteConvidante")
+  // ---- Reengajamento por email (painel de administração) ----
+  reengajamentoEmails ReengajamentoEmail[]
+}
+
+// ---- Registo de emails de reengajamento enviados (painel de administração) ----
+//  Uma linha por email realmente enviado a um utilizador, numa campanha.
+//  campanhaId agrupa os envios de uma mesma campanha (não há tabela "Campanha"
+//  própria — é só uma etiqueta gerada no momento do envio, ex.: um timestamp).
+model ReengajamentoEmail {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campanhaId  String
+  assunto     String
+  estado      String   @default("enviado") // "enviado" | "falhou"
+  erro        String?  // preenchido só se estado === "falhou"
+  enviadoEm   DateTime @default(now())
+
+  @@index([campanhaId])
+  @@index([userId])
 }
 
 // ---- Lembretes (Premium): pagamentos a não esquecer ----

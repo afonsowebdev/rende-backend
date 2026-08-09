@@ -97,7 +97,7 @@ function recolherPerfil(body) {
 /* ---- 1) REGISTAR: cria (ou reaproveita) a conta por confirmar e envia o código ---- */
 router.post("/registar", aw(async (req, res) => {
   const email = String(req.body.email || "").trim();
-  const { nome, moeda } = req.body;
+  const { nome, moeda, fonteRegisto } = req.body;
   if (!email || !emailValido(email)) {
     return res.status(400).json({ erro: "Indica um email válido." });
   }
@@ -114,6 +114,9 @@ router.post("/registar", aw(async (req, res) => {
     codigoExpira: new Date(Date.now() + QUINZE_MIN),
     emailVerificado: false,
   };
+  // Só gravamos a fonte no 1.º registo (nunca reescrever numa tentativa repetida
+  // com o mesmo email ainda por confirmar) — só "app" ou "web", nunca outro valor.
+  if (!existe) dados.fonteRegisto = fonteRegisto === "app" ? "app" : "web";
   const user = existe
     ? await prisma.user.update({ where: { email }, data: dados })
     : await prisma.user.create({ data: { email, ...dados } });

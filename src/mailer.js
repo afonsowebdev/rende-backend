@@ -153,6 +153,13 @@ function htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar) {
     <tr><td style="padding:6px 28px 26px;"></td></tr>`);
 }
 
+/* ---- Email de campanha (reengajamento, painel de administração) ----
+   `corpoHtml` já vem com as variáveis (ex.: {{nome}}) substituídas pelo
+   chamador — este ficheiro só trata da moldura de marca à volta do texto. */
+function htmlCampanha(corpoHtml) {
+  return moldura(`<tr><td style="padding:30px 28px 26px;">${corpoHtml}</td></tr>`);
+}
+
 /* Função interna que faz o pedido ao Resend. */
 async function enviar(para, assunto, html, codigo, etiqueta) {
   const from = process.env.MAIL_FROM || "Rende+ <geral@rendemais.pt>";
@@ -204,11 +211,16 @@ async function enviarEmailMudarPassword(para, nome, codigo) {
   return enviar(para, "Confirma a alteração da palavra-passe — Rende+", htmlMudarPassword(nome, codigo), codigo, "Código para mudar a palavra-passe");
 }
 
+async function enviarEmailCampanha(para, assunto, corpoHtml) {
+  return enviar(para, assunto, htmlCampanha(corpoHtml), assunto, "Email de campanha");
+}
+
 module.exports = {
   enviarEmailVerificacao,
   enviarEmailRecuperacao,
   enviarEmailConvite,
   enviarEmailMudarPassword,
+  enviarEmailCampanha,
   emailConfigurado,
   smtpConfigurado: emailConfigurado,
 };
