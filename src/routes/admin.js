@@ -59,7 +59,7 @@ router.get("/utilizadores", aw(async (req, res) => {
       take: TAMANHO_PAGINA,
       select: {
         id: true, email: true, nome: true, plano: true, planoExpira: true, role: true, createdAt: true,
-        emailVerificado: true, ultimoLogin: true,
+        emailVerificado: true, ultimoLogin: true, aceitaEmailsReengajamento: true,
         _count: { select: { despesas: true, rendimentos: true } },
       },
     }),
@@ -68,7 +68,7 @@ router.get("/utilizadores", aw(async (req, res) => {
   res.json({
     utilizadores: utilizadores.map((u) => ({
       id: u.id, email: u.email, nome: u.nome, plano: u.plano, planoExpira: u.planoExpira, role: u.role, createdAt: u.createdAt,
-      emailVerificado: u.emailVerificado, ultimoLogin: u.ultimoLogin,
+      emailVerificado: u.emailVerificado, ultimoLogin: u.ultimoLogin, aceitaEmailsReengajamento: u.aceitaEmailsReengajamento,
       totalDespesas: u._count.despesas, totalRendimentos: u._count.rendimentos,
     })),
     pagina: page,
@@ -600,6 +600,62 @@ router.post("/campanhas-email", aw(async (req, res) => {
       if (i + TAMANHO_LOTE < destinatarios.length) await new Promise((r) => setTimeout(r, ATRASO_MS));
     }
   })().catch((e) => console.error("[campanhas-email] erro no envio em lote:", e));
+}));
+
+/* ---- HISTÓRICO DE ENVIOS DE EMAIL (campanhas + envios individuais) ----
+   Reaproveita o que já fica gravado a cada envio: o AdminAuditLog criado em
+   POST /campanhas-email (quem disparou, assunto, quantos destinatários) e os
+   registos reais por destinatário em ReengajamentoEmail (sucesso ou falha).
+   Não há nenhuma métrica inventada aqui — só a contagem real de "enviado"
+   e "falhou" agrupada por campanha, que já existia na base de dados mas
+   não estava visível em lado nenhum do painel. */
+router.get("/campanhas-email", aw(async (req, res) => {
+  const page = paginaPedida(req);
+
+  const [total, logs] = await Promise.all([
+    prisma.adminAuditLog.count({ where: { acao: "enviar_campanha_email" } }),
+    prisma.adminAuditLog.findMany({
+      where: { acao: "enviar_campanha_email" },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * TAMANHO_PAGINA,
+      take: TAMANHO_PAGINA,
+      include: { admin: { select: { email: true } } },
+    }),
+  ]);
+
+  const detalhesPorLog = logs.map((l) => { try { return JSON.parse(l.detalhes); } catch { return {}; } });
+  const campanhaIds = detalhesPorLog.map((d) => d.campanhaId).filter(Boolean);
+
+  const contagens = campanhaIds.length
+    ? await prisma.reengajamentoEmail.groupBy({ by: ["campanhaId", "estado"], where: { campanhaId: { in: campanhaIds } }, _count: { _all: true } })
+    : [];
+  const statsPorCampanha = {};
+  contagens.forEach((c) => {
+    const s = (statsPorCampanha[c.campanhaId] = statsPorCampanha[c.campanhaId] || { enviado: 0, falhou: 0 });
+    s[c.estado] = c._count._all;
+  });
+
+  res.json({
+    campanhas: logs.map((l, i) => {
+      const d = detalhesPorLog[i];
+      const s = statsPorCampanha[d.campanhaId] || { enviado: 0, falhou: 0 };
+      return {
+        id: l.id,
+        campanhaId: d.campanhaId || null,
+        assunto: d.assunto || "—",
+        destinatariosPrevistos: d.destinatarios || 0,
+        ignoradosSemConsentimento: d.ignoradosSemConsentimento || 0,
+        enviados: s.enviado,
+        falharam: s.falhou,
+        individual: (d.destinatarios || 0) === 1,
+        adminEmail: l.admin ? l.admin.email : "(conta apagada)",
+        criadoEm: l.createdAt,
+      };
+    }),
+    pagina: page,
+    total,
+    totalPaginas: Math.max(1, Math.ceil(total / TAMANHO_PAGINA)),
+  });
 }));
 
 module.exports = router;
