@@ -21,7 +21,7 @@ const {
   gerarCodigo, criarTokenSetup, verificarTokenSetup, validarPassword,
 } = require("../auth");
 const { aw } = require("../helpers");
-const { enviarEmailVerificacao, enviarEmailRecuperacao, enviarEmailMudarPassword } = require("../mailer");
+const { enviarEmailVerificacao, enviarEmailRecuperacao, enviarEmailMudarPassword, enviarEmailBoasVindas } = require("../mailer");
 
 const QUINZE_MIN = 15 * 60 * 1000;
 const SETE_DIAS = 7 * 24 * 60 * 60 * 1000;
@@ -196,6 +196,17 @@ router.post("/definir-password", aw(async (req, res) => {
   }
 
   const atualizado = await prisma.user.update({ where: { id: userId }, data: dados });
+
+  // Email de boas-vindas: só agora, com a conta mesmo pronta (password definida,
+  // sessão prestes a começar) — não em /verificar-email, onde a conta ainda não
+  // tem password nem dá para entrar. Nunca deve impedir a criação da conta: uma
+  // falha aqui fica só registada nos logs, a resposta ao cliente segue na mesma.
+  try {
+    await enviarEmailBoasVindas(atualizado.email, atualizado.nome);
+  } catch (e) {
+    console.error("[auth] falha ao enviar o email de boas-vindas:", e && e.message);
+  }
+
   const token = criarToken(atualizado.id);
   res.status(201).json({ token, user: dadosPublicos(atualizado) });
 }));

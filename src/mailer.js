@@ -157,21 +157,27 @@ function rodape() {
   </td></tr>`;
 }
 
-/* Molde comum a todos os emails. Recebe o "miolo" (HTML do meio, específico
-   de cada email) e devolve o email completo: cabeçalho, miolo, vantagens
-   e rodapé — sempre a mesma estrutura, só o miolo muda. */
-function moldura(miolo) {
+/* Casca exterior (doctype + fundo + cartão de 560px) partilhada por TODOS os
+   emails, mesmo os que não seguem a moldura "cheia" (ex.: boas-vindas, que
+   tem o seu próprio cabeçalho/rodapé — ver src/email/templates/). Recebe o
+   HTML das linhas <tr> a colocar dentro do cartão. */
+function casca(linhasHtml) {
   return `<!doctype html><html lang="pt"><body style="margin:0;background-color:${COR.tela};font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:${COR.ink};">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:${COR.tela};padding:32px 16px;" bgcolor="${COR.tela}">
     <tr><td align="center">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background-color:${COR.cartao};border-radius:18px;overflow:hidden;border:1px solid ${COR.borda};box-shadow:0 8px 28px -16px rgba(10,60,40,.35);" bgcolor="${COR.cartao}">
-        ${cabecalho()}
-        ${miolo}
-        ${filaVantagens()}
-        ${rodape()}
+        ${linhasHtml}
       </table>
     </td></tr>
   </table></body></html>`;
+}
+
+/* Molde comum aos emails "cheios" (verificação, recuperação, mudar password,
+   convite, campanha). Recebe o "miolo" (HTML do meio, específico de cada
+   email) e devolve o email completo: cabeçalho, miolo, vantagens e rodapé —
+   sempre a mesma estrutura, só o miolo muda. */
+function moldura(miolo) {
+  return casca(`${cabecalho()}${miolo}${filaVantagens()}${rodape()}`);
 }
 
 /* Caixa com o código de 6 dígitos — com etiqueta e selo de validade. */
@@ -195,6 +201,13 @@ function caixaBotao(link, texto) {
     </div>
   </td></tr>`;
 }
+
+// Template do email de boas-vindas — vive no seu próprio ficheiro (ver
+// src/email/templates/boas-vindas.js) por ter uma estrutura mais simples
+// que os restantes; recebe aqui as peças de marca partilhadas (cores,
+// casca exterior, logótipo, botão), já todas definidas neste ponto do ficheiro.
+const criarTemplateBoasVindas = require("./email/templates/boas-vindas");
+const htmlBoasVindas = criarTemplateBoasVindas({ COR, casca, logoBadge, caixaBotao });
 
 /* ---- Email 1: verificação de conta ---- */
 function htmlVerificacao(nome, codigo) {
@@ -316,19 +329,19 @@ async function enviar(para, assunto, html, codigo, etiqueta) {
 }
 
 async function enviarEmailVerificacao(para, nome, codigo) {
-  return enviar(para, "Confirma o teu email — Rende+", htmlVerificacao(nome, codigo), codigo, "Código de verificação");
+  return enviar(para, "Confirma o teu email · Rende+", htmlVerificacao(nome, codigo), codigo, "Código de verificação");
 }
 
 async function enviarEmailRecuperacao(para, nome, codigo) {
-  return enviar(para, "Repor a palavra-passe — Rende+", htmlRecuperacao(nome, codigo), codigo, "Código de recuperação");
+  return enviar(para, "Repor a palavra-passe · Rende+", htmlRecuperacao(nome, codigo), codigo, "Código de recuperação");
 }
 
 async function enviarEmailConvite(para, nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar) {
-  return enviar(para, `${nomeConvidante} convidou-te para um grupo — Rende+`, htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar), linkAceitar, "Link de convite");
+  return enviar(para, `${nomeConvidante} convidou-te para um grupo · Rende+`, htmlConvite(nomeConvidado, nomeGrupo, nomeConvidante, linkAceitar), linkAceitar, "Link de convite");
 }
 
 async function enviarEmailMudarPassword(para, nome, codigo) {
-  return enviar(para, "Confirma a alteração da palavra-passe — Rende+", htmlMudarPassword(nome, codigo), codigo, "Código para mudar a palavra-passe");
+  return enviar(para, "Confirma a alteração da palavra-passe · Rende+", htmlMudarPassword(nome, codigo), codigo, "Código para mudar a palavra-passe");
 }
 
 async function enviarEmailCampanha(para, assunto, corpoHtml) {
@@ -336,7 +349,11 @@ async function enviarEmailCampanha(para, assunto, corpoHtml) {
 }
 
 async function enviarEmailQuestionario(para, nome, linkQuestionario) {
-  return enviar(para, "A tua opinião conta — Rende+", htmlQuestionario(nome, linkQuestionario), linkQuestionario, "Email de questionário");
+  return enviar(para, "A tua opinião conta · Rende+", htmlQuestionario(nome, linkQuestionario), linkQuestionario, "Email de questionário");
+}
+
+async function enviarEmailBoasVindas(para, nome) {
+  return enviar(para, "Bem-vindo ao Rende+", htmlBoasVindas(nome), "boas-vindas", "Email de boas-vindas");
 }
 
 module.exports = {
@@ -346,6 +363,13 @@ module.exports = {
   enviarEmailMudarPassword,
   enviarEmailCampanha,
   enviarEmailQuestionario,
+  enviarEmailBoasVindas,
+  // Peças de marca reutilizadas por templates fora deste ficheiro
+  // (ver src/email/templates/) — cores, casca exterior, logótipo e botão.
+  COR,
+  casca,
+  logoBadge,
+  caixaBotao,
   emailConfigurado,
   smtpConfigurado: emailConfigurado,
 };
