@@ -209,6 +209,12 @@ function caixaBotao(link, texto) {
 const criarTemplateBoasVindas = require("./email/templates/boas-vindas");
 const htmlBoasVindas = criarTemplateBoasVindas({ COR, casca, logoBadge, caixaBotao });
 
+// Template do email de Premium ativado — mesmo motivo do de boas-vindas:
+// vive no seu próprio ficheiro (ver src/email/templates/premium-ativado.js)
+// por ter um cabeçalho e um cartão de resumo próprios.
+const criarTemplatePremiumAtivado = require("./email/templates/premium-ativado");
+const htmlPremiumAtivado = criarTemplatePremiumAtivado({ COR, casca, logoBadge, caixaBotao });
+
 /* ---- Email 1: verificação de conta ---- */
 function htmlVerificacao(nome, codigo) {
   const ola = nome ? `Olá, ${nome}` : "Olá";
@@ -356,6 +362,10 @@ async function enviarEmailBoasVindas(para, nome) {
   return enviar(para, "Bem-vindo ao Rende+", htmlBoasVindas(nome), "boas-vindas", "Email de boas-vindas");
 }
 
+async function enviarEmailPremiumAtivado(para, nome, plano, proximaRenovacao) {
+  return enviar(para, "O teu Premium está ativo · Rende+", htmlPremiumAtivado(nome, plano, proximaRenovacao), "premium-ativado", "Email de Premium ativado");
+}
+
 module.exports = {
   enviarEmailVerificacao,
   enviarEmailRecuperacao,
@@ -364,6 +374,7 @@ module.exports = {
   enviarEmailCampanha,
   enviarEmailQuestionario,
   enviarEmailBoasVindas,
+  enviarEmailPremiumAtivado,
   // Peças de marca reutilizadas por templates fora deste ficheiro
   // (ver src/email/templates/) — cores, casca exterior, logótipo e botão.
   COR,

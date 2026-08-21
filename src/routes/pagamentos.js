@@ -20,6 +20,7 @@ const router = express.Router();
 const prisma = require("../db");
 const { exigirLogin } = require("../auth");
 const { aw } = require("../helpers");
+const { enviarEmailPremiumAtivado } = require("../mailer");
 
 // Liga à biblioteca do Stripe usando a chave secreta do .env.
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
@@ -73,7 +74,12 @@ router.get("/confirmar", aw(async (req, res) => {
   if (!ativa) return res.json({ premium: false, mensagem: "Pagamento ainda não confirmado." });
 
   // O premium é válido até ao fim do período pago (Stripe dá isto em segundos Unix).
-  const expira = sub && sub.current_period_end ? new Date(sub.current_period_end * 1000) : null;
+  // Desde a versão da API do Stripe usada aqui, current_period_end já não vive no
+  // topo da subscrição — mudou-se para dentro de cada item (subscrição pode ter
+  // vários itens, cada um com o seu próprio ciclo). Como só temos sempre 1 item
+  // (1 plano por subscrição), vamos buscá-lo aí.
+  const item = sub && sub.items && sub.items.data && sub.items.data[0];
+  const expira = item && item.current_period_end ? new Date(item.current_period_end * 1000) : null;
 
   const user = await prisma.user.update({
     where: { id: req.userId },
@@ -84,6 +90,22 @@ router.get("/confirmar", aw(async (req, res) => {
       stripeSubId: sub ? sub.id : null,
     },
   });
+
+  // Email de "Premium ativado": só agora, com o Stripe já confirmado e o plano
+  // já atualizado na base de dados — nunca deve impedir nem reverter a
+  // ativação do pagamento. Uma falha aqui fica só registada nos logs, a
+  // resposta ao cliente segue na mesma (mesmo padrão do email de boas-vindas
+  // em src/routes/auth.js).
+  try {
+    const intervalo = item && item.price && item.price.recurring ? item.price.recurring.interval : null;
+    const planoLabel = intervalo === "year" ? "Anual" : "Mensal";
+    const proximaRenovacao = expira
+      ? expira.toLocaleDateString("pt-PT", { day: "numeric", month: "long", year: "numeric" })
+      : "—";
+    await enviarEmailPremiumAtivado(user.email, user.nome, planoLabel, proximaRenovacao);
+  } catch (e) {
+    console.error("[pagamentos] falha ao enviar o email de Premium ativado:", e && e.message);
+  }
 
   res.json({ premium: true, plano: user.plano, planoExpira: user.planoExpira });
 }));
